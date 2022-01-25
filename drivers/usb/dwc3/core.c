@@ -1071,18 +1071,15 @@ int dwc3_core_init(struct dwc3 *dwc)
 		dwc3_writel(dwc->regs, DWC3_GUCTL2, reg);
 	}
 
-	/*
-	 * When configured in HOST mode, after issuing U3/L2 exit controller
+	/* When configured in HOST mode, after issuing U3/L2 exit controller
 	 * fails to send proper CRC checksum in CRC5 feild. Because of this
 	 * behaviour Transaction Error is generated, resulting in reset and
-	 * re-enumeration of usb device attached. All the termsel, xcvrsel,
-	 * opmode becomes 0 during end of resume. Enabling bit 10 of GUCTL1
-	 * will correct this problem. This option is to support certain
-	 * legacy ULPI PHYs.
+	 * re-enumeration of usb device attached. Enabling bit 10 of GUCTL1
+	 * will correct this problem
 	 */
-	if (dwc->resume_hs_terminations) {
+	if (dwc->enable_guctl1_resume_quirk) {
 		reg = dwc3_readl(dwc->regs, DWC3_GUCTL1);
-		reg |= DWC3_GUCTL1_RESUME_OPMODE_HS_HOST;
+		reg |= DWC3_GUCTL1_RESUME_QUIRK;
 		dwc3_writel(dwc->regs, DWC3_GUCTL1, reg);
 	}
 
@@ -1442,6 +1439,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 	device_property_read_u32(dev, "snps,quirk-frame-length-adjustment",
 				 &dwc->fladj);
 
+	dwc->enable_guctl1_resume_quirk = device_property_read_bool(dev,
+				"snps,enable_guctl1_resume_quirk");
 	dwc->dis_metastability_quirk = device_property_read_bool(dev,
 				"snps,dis_metastability_quirk");
 
