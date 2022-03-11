@@ -1929,7 +1929,6 @@ static int __maybe_unused axienet_open(struct net_device *ndev)
 					 (val & MRMAC_RX_BLKLCK_MASK), 10, DELAY_OF_ONE_MILLISEC);
 		if (err)
 			netdev_err(ndev, "MRMAC block lock not complete! Cross-check the MAC ref clock configuration\n");
-		}
 
 		err = readx_poll_timeout(axienet_get_mrmac_rx_status, lp, val,
 					 (val & MRMAC_RX_STATUS_MASK), 10, DELAY_OF_ONE_MILLISEC);
