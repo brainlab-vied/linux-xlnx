@@ -3770,7 +3770,7 @@ static struct platform_driver allegro_driver = {
 	.probe = allegro_probe,
 	.remove = allegro_remove,
 	.driver = {
-		.name = "allegro",
+		.name = "allegro-dvt",
 		.of_match_table = of_match_ptr(allegro_dt_ids),
 	},
 };
