@@ -28,9 +28,17 @@
 #include <media/videobuf2-dma-contig.h>
 #include <media/videobuf2-v4l2.h>
 
+#include <linux/version.h>
+#include <linux/of_address.h>
+#include <linux/of_reserved_mem.h>
+
 #include "allegro-mail.h"
 #include "nal-h264.h"
 #include "nal-hevc.h"
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+#define HOTPLUG_ALIGN 0x40000000
+#endif
 
 /*
  * Support up to 4k video streams. The hardware actually supports higher
@@ -3670,6 +3678,59 @@ static int allegro_firmware_request_nowait(struct allegro_dev *dev)
 				       allegro_fw_callback);
 }
 
+static void allegro_probe_mem_region(struct platform_device *pdev)
+{
+	struct device_node *mem_node;
+	struct resource mem_res;
+	unsigned long pgtable_padding;
+	int ret;
+
+	mem_node = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
+	if (!mem_node)
+		return;
+
+	ret = of_address_to_resource(mem_node, 0, &mem_res);
+	if (ret)
+		goto node_put;
+
+	ret = of_reserved_mem_device_init(&pdev->dev);
+	if (ret) {
+		dev_err(&pdev->dev,
+			"failed to get shared dma pool: %d\n", ret);
+		goto node_put;
+	}
+
+	v4l2_dbg(1, debug, &dev->v4l2_dev,
+			"using shared dma pool for allocation\n");
+
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (ret) {
+		dev_err(&pdev->dev, "dma_set_mask_and_coherent: %d\n", ret);
+		of_reserved_mem_device_release(&pdev->dev);
+		goto node_put;
+	}
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+	/* Hotplug requires 0x40000000 alignment so round to nearest multiple */
+	if (resource_size(&mem_res) % HOTPLUG_ALIGN)
+		pgtable_padding = HOTPLUG_ALIGN -
+			(resource_size(&mem_res) % HOTPLUG_ALIGN);
+	else
+		pgtable_padding = 0;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	add_memory(0, mem_res.start, resource_size(&mem_res) +
+		   pgtable_padding, MHP_NONE);
+#else
+	add_memory(0, mem_res.start, resource_size(&mem_res) +
+		   pgtable_padding);
+#endif
+#endif
+
+node_put:
+	of_node_put(mem_node);
+}
+
 static int allegro_probe(struct platform_device *pdev)
 {
 	struct allegro_dev *dev;
@@ -3724,6 +3785,8 @@ static int allegro_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to init sram\n");
 		return PTR_ERR(dev->sram);
 	}
+
+	allegro_probe_mem_region(pdev);
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
