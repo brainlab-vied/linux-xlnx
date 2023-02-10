@@ -360,6 +360,15 @@ static const struct fw_info supported_firmware[] = {
 		.mailbox_size = 0x800 - 0x8,
 		.mailbox_version = MCU_MSG_VERSION_2019_2,
 		.suballocator_size = SZ_32M,
+	}, {
+		.id = 17256,
+		.id_codec = 138748,
+		.version = "v2021.1",
+		.mailbox_cmd = 0x7000,
+		.mailbox_status = 0x7800,
+		.mailbox_size = 0x800 - 0x8,
+		.mailbox_version = MCU_MSG_VERSION_2019_2,
+		.suballocator_size = SZ_32M,
 	},
 };
 
