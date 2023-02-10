@@ -2296,7 +2296,7 @@ static int allegro_mcu_wait_for_sleep(struct allegro_dev *dev)
 	while (regmap_read(dev->regmap, AL5_MCU_STA, &status) == 0 &&
 	       status != AL5_MCU_STA_SLEEP) {
 		if (time_after(jiffies, timeout))
-			return -ETIMEDOUT;
+			break;
 		cpu_relax();
 	}
 
@@ -2317,7 +2317,7 @@ static int allegro_mcu_start(struct allegro_dev *dev)
 	while (regmap_read(dev->regmap, AL5_MCU_STA, &status) == 0 &&
 	       status == AL5_MCU_STA_SLEEP) {
 		if (time_after(jiffies, timeout))
-			return -ETIMEDOUT;
+			break;
 		cpu_relax();
 	}
 
