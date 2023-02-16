@@ -3700,8 +3700,7 @@ static void allegro_probe_mem_region(struct platform_device *pdev)
 		goto node_put;
 	}
 
-	v4l2_dbg(1, debug, &dev->v4l2_dev,
-			"using shared dma pool for allocation\n");
+	dev_info(&pdev->dev, "using shared dma pool for allocation\n");
 
 	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
 	if (ret) {
