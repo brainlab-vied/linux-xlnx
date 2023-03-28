@@ -15,6 +15,7 @@ enum mcu_msg_type {
 	MCU_MSG_TYPE_CREATE_CHANNEL = 0x0005,
 	MCU_MSG_TYPE_DESTROY_CHANNEL = 0x0006,
 	MCU_MSG_TYPE_ENCODE_FRAME = 0x0007,
+	MCU_MSG_TYPE_DECODE_FRAME = 0x0008,
 	MCU_MSG_TYPE_PUT_STREAM_BUFFER = 0x0012,
 	MCU_MSG_TYPE_PUSH_BUFFER_INTERMEDIATE = 0x000e,
 	MCU_MSG_TYPE_PUSH_BUFFER_REFERENCE = 0x000f,
@@ -23,6 +24,12 @@ enum mcu_msg_type {
 enum mcu_msg_version {
 	MCU_MSG_VERSION_2018_2,
 	MCU_MSG_VERSION_2019_2,
+	MCU_MSG_VERSION_2021_1,
+};
+
+enum mcu_msg_devtype {
+	MCU_MSG_DEVTYPE_ENCODER,
+	MCU_MSG_DEVTYPE_DECODER,
 };
 
 const char *msg_type_name(enum mcu_msg_type type);
@@ -30,6 +37,7 @@ const char *msg_type_name(enum mcu_msg_type type);
 struct mcu_msg_header {
 	enum mcu_msg_type type;
 	enum mcu_msg_version version;
+	enum mcu_msg_devtype devtype;
 };
 
 struct mcu_msg_init_request {
@@ -45,7 +53,7 @@ struct mcu_msg_init_response {
 	u32 reserved0;
 };
 
-struct create_channel_param {
+struct encoder_channel_param {
 	enum mcu_msg_version version;
 	u32 layer_id;
 	u16 width;
@@ -135,6 +143,53 @@ struct create_channel_param {
 	u32 lda_factors[6];
 
 	u32 max_num_merge_cand;
+};
+
+struct decoder_channel_param {
+	enum mcu_msg_version version;
+	s32 width;
+	s32 height;
+	u8 log2_max_cu_size;
+	u32 framerate;
+	u32 clk_ratio;
+	u32 max_latency;
+	u8 num_core;
+
+	u8 ddr_width;
+#define AL_DEC_DDR_WIDTH_16             0
+#define AL_DEC_DDR_WIDTH_32             1
+#define AL_DEC_DDR_WIDTH_64             2
+
+	bool low_lat;
+	/*!< use low latency decoding */
+	bool parallel_wpp;
+	/*!< use wavefront parallelization processing */
+	bool disable_cache;
+	/*!< disable the decoder cache */
+	bool frame_buffer_compression;
+	/*!< use internal frame buffer compression */
+	bool use_early_callback;
+
+	s32 fb_storage_mode;
+#define AL_DEC_FB_RASTER              0
+#define AL_DEC_FB_TILE_32x4           2
+#define AL_DEC_FB_TILE_64x4           3
+
+	u32 codec;
+#define AL_DEC_CODEC_AVC              0
+#define AL_DEC_CODEC_HEVC             1
+#define AL_DEC_CODEC_AV1              2
+#define AL_DEC_CODEC_VP9              3
+#define AL_DEC_CODEC_JPEG             4
+
+	s32 max_slices;
+
+	u32 dec_unit;
+#define AL_DEC_UNIT_FRAME             0
+#define AL_DEC_UNIT_SLICE             1
+
+	u32 buffer_output_mode;
+#define AL_DEC_OUTPUT_INTERNAL        0
 };
 
 struct mcu_msg_create_channel {
@@ -276,20 +331,170 @@ struct mcu_msg_encode_frame_response {
 	u32 reserved6;
 };
 
+struct mcu_msg_decode_frame {
+	struct mcu_msg_header header;
+	u32 channel_id;
+
+	u32 codec;
+
+	u8 frm_buf_id;
+	u8 mv_buf_id;
+	u16 padding1;
+
+	u8 max_transfo_depth_intra;
+	u8 max_transfo_depth_inter;
+	u8 log2_min_tu_size;
+	u8 log2_max_tu_size;
+
+	u8 log2_max_tu_skip_size;
+	s8 log2_min_pcm_size;
+	s8 log2_max_pcm_size;
+	s8 log2_min_cu_size;
+
+	u8 log2_max_cu_size;
+	u8 pcm_bit_depth_y;
+	u8 pcm_bit_depth_c;
+	u8 bit_depth_luma;
+
+	u8 bit_depth_chroma;
+	u8 chroma_qp_offs_depth;
+	u8 qp_off_lst_size;
+	u8 parallel_merge;
+
+	u8 coloc_pic_id;
+	s8 pic_cb_qp_offs;
+	s8 pic_cr_qp_offs;
+	s8 cb_qp_off_lst[6];
+	s8 cr_qp_off_lst[6];
+	s8 delta_qp_cu_depth;
+
+	u16 pic_width;
+	u16 pic_height;
+	u16 lcu_pic_width;
+	u16 lcu_pic_height;
+
+#define AL_DEC_MAX_COLUMNS_TILE				20
+#define AL_DEC_MAX_ROWS_TILE				22
+	u16 column_width[AL_DEC_MAX_COLUMNS_TILE];
+	u16 row_height[AL_DEC_MAX_COLUMNS_TILE];
+	u16 num_tile_columns;
+	u16 num_tile_rows;
+
+	s32 current_poc;
+
+	s32 pic_struct;
+#define AL_DEC_PS_FRM 						0
+#define AL_DEC_PS_TOP_FLD 					1
+#define AL_DEC_PS_BOT_FLD 					2
+#define AL_DEC_PS_TOP_BOT 					3
+#define AL_DEC_PS_BOT_TOP 					4
+#define AL_DEC_PS_TOP_BOT_TOP 				5
+#define AL_DEC_PS_BOT_TOP_BOT 				6
+#define AL_DEC_PS_FRM_x2 					7
+#define AL_DEC_PS_FRM_x3 					8
+#define AL_DEC_PS_TOP_FLD_WITH_PREV_BOT 	9
+#define AL_DEC_PS_BOT_FLD_WITH_PREV_TOP 	10
+#define AL_DEC_PS_TOP_FLD_WITH_NEXT_BOT 	11
+#define AL_DEC_PS_BOT_FLD_WITH_NEXT_TOP 	12
+
+	u32 option_flags;
+#define AL_DEC_OPT_ENABLE_SCL_LIST			BIT(0)
+#define AL_DEC_OPT_LOAD_SCL_LIST			BIT(1)
+#define AL_DEC_OPT_INTRA_PCM				BIT(5)
+#define AL_DEC_OPT_LOSSLESS					BIT(7)
+#define AL_DEC_OPT_INTRA_ONLY				BIT(8)
+#define AL_DEC_OPT_DIRECT8x8INFER			BIT(9)
+#define AL_DEC_OPT_CONSTRAINED_INTRA_PRED	BIT(19)
+#define AL_DEC_OPT_TILE						BIT(21)
+
+	u8 num_ladf_intervals;
+	s8 ladf_lowest_interval_qp_offs;
+	s8 ladf_qp_offs[4];
+	u16 ladf_delta_threshold[4];
+
+	u8 qp_prime_ts_min;
+
+	s32 chroma_mode;
+#define AL_DEC_CHROMA_MONO 					0
+#define AL_DEC_CHROMA_4_0_0 				AL_DEC_CHROMA_MONO
+#define AL_DEC_CHROMA_4_2_0 				1
+#define AL_DEC_CHROMA_4_2_2 				2
+#define AL_DEC_CHROMA_4_4_4 				3
+
+	s32 entropy_mode;
+#define AL_DEC_MODE_CAVLC					0
+#define AL_DEC_MODE_CABAC					1
+
+	s32 frame_num;
+	u64 user_param __attribute__((aligned(8)));
+
+	u8 log2_sao_offs_scale_luma;
+	u8 log2_sao_offs_scale_chroma;
+	u16 padding2;
+
+	/* compressed MVDs + header + residuals pool buffer */
+	u32 addr_comp_data;
+	/* Compression map : LCU size + LCU offset pool buffer */
+	u32 addr_comp_map;
+	/* Reference adresses for the board pool buffer */
+	u32 addr_list_ref;
+	u32 addr_stream;
+	u32 stream_size;
+	u32 addr_rec_y;
+	u32 addr_rec_c1;
+	u32 addr_rec_fbc_map_y;
+	u32 addr_rec_fbc_map_c1;
+	u32 pitch;
+	u32 addr_scl;
+	u32 addr_poc;
+	u32 addr_mv;
+	/* Weighted Pred Tables pool buffer */
+	u32 addr_wp;
+
+	u32 *slice_param_blob;
+	size_t slice_param_blob_size;
+	u32 slice_param_blob_mcu_addr;
+};
+
+struct mcu_msg_decode_frame_response {
+	struct mcu_msg_header header;
+	u32 channel_id;
+	u32 response_type;
+#define AL_DEC_RESPONSE_END_PARSING		1
+#define AL_DEC_RESPONSE_END_DECODING	2
+	u8 frm_buf_id;
+	u8 mv_buf_id;
+	u16 padding;
+	u32 num_lcu;
+	u32 num_bytes;
+	u32 num_bins;
+	u32 crc;
+	u8 pic_state;
+#define AL_DEC_PIC_STATE_CONCEAL		BIT(0)
+#define AL_DEC_PIC_STATE_HANGED			BIT(1)
+#define AL_DEC_PIC_STATE_NOT_FINISHED	BIT(2)
+#define AL_DEC_PIC_STATE_CMD_INVALID	BIT(3)
+};
+
 union mcu_msg_response {
 	struct mcu_msg_header header;
 	struct mcu_msg_init_response init;
 	struct mcu_msg_create_channel_response create_channel;
 	struct mcu_msg_destroy_channel_response destroy_channel;
 	struct mcu_msg_encode_frame_response encode_frame;
+	struct mcu_msg_decode_frame_response decode_frame;
 };
 
-ssize_t allegro_encode_config_blob(u32 *dst, struct create_channel_param *param);
-ssize_t allegro_decode_config_blob(struct create_channel_param *param,
+ssize_t allegro_pack_encoder_config_blob(u32 *dst,
+					struct encoder_channel_param *param);
+ssize_t allegro_unpack_encoder_config_blob(struct encoder_channel_param *param,
 				   struct mcu_msg_create_channel_response *msg,
 				   u32 *src);
 
-int allegro_decode_mail(void *msg, u32 *src);
+ssize_t allegro_pack_decoder_config_blob(u32 *dst,
+					struct decoder_channel_param *param);
+
+int allegro_decode_mail(void *msg, u32 *src, enum mcu_msg_devtype devtype);
 ssize_t allegro_encode_mail(u32 *dst, void *msg);
 
 #endif

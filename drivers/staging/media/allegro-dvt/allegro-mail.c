@@ -60,11 +60,9 @@ allegro_enc_init(u32 *dst, struct mcu_msg_init_request *msg)
 	return i * sizeof(*dst);
 }
 
-static inline u32 settings_get_mcu_codec(struct create_channel_param *param)
+static inline u32 settings_get_mcu_codec(
+			enum mcu_msg_version version, u32 pixelformat)
 {
-	enum mcu_msg_version version = param->version;
-	u32 pixelformat = param->codec;
-
 	if (version < MCU_MSG_VERSION_2019_2) {
 		switch (pixelformat) {
 		case V4L2_PIX_FMT_HEVC:
@@ -85,13 +83,13 @@ static inline u32 settings_get_mcu_codec(struct create_channel_param *param)
 }
 
 ssize_t
-allegro_encode_config_blob(u32 *dst, struct create_channel_param *param)
+allegro_pack_encoder_config_blob(u32 *dst, struct encoder_channel_param *param)
 {
 	enum mcu_msg_version version = param->version;
 	unsigned int i = 0;
 	unsigned int j = 0;
 	u32 val;
-	unsigned int codec = settings_get_mcu_codec(param);
+	unsigned int codec = settings_get_mcu_codec(version, param->codec);
 
 	if (version >= MCU_MSG_VERSION_2019_2)
 		dst[i++] = param->layer_id;
@@ -232,10 +230,41 @@ allegro_encode_config_blob(u32 *dst, struct create_channel_param *param)
 	return i * sizeof(*dst);
 }
 
+ssize_t
+allegro_pack_decoder_config_blob(u32 *dst, struct decoder_channel_param *param)
+{
+	enum mcu_msg_version version = param->version;
+	unsigned int codec = settings_get_mcu_codec(version, param->codec);
+	unsigned int i = 0;
+
+	dst[i++] = param->width;
+	dst[i++] = param->height;
+	if (version >= MCU_MSG_VERSION_2021_1)
+		dst[i++] = param->log2_max_cu_size;
+	dst[i++] = param->framerate;
+	dst[i++] = param->clk_ratio;
+	dst[i++] = param->max_latency;
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), param->parallel_wpp) |
+		   FIELD_PREP(GENMASK(23, 16), param->low_lat) |
+		   FIELD_PREP(GENMASK(15, 8), param->ddr_width) |
+		   FIELD_PREP(GENMASK(7, 0), param->num_core);
+	dst[i++] = FIELD_PREP(GENMASK(23, 16), param->use_early_callback) |
+		   FIELD_PREP(GENMASK(15, 8),param->frame_buffer_compression) |
+		   FIELD_PREP(GENMASK(7, 0), param->disable_cache);
+	dst[i++] = param->fb_storage_mode;
+	dst[i++] = codec;
+	dst[i++] = param->max_slices;
+	dst[i++] = param->dec_unit;
+	dst[i++] = param->buffer_output_mode;
+
+	return i * sizeof(*dst);
+}
+
 static ssize_t
 allegro_enc_create_channel(u32 *dst, struct mcu_msg_create_channel *msg)
 {
 	enum mcu_msg_version version = msg->header.version;
+	enum mcu_msg_devtype devtype = msg->header.devtype;
 	unsigned int i = 0;
 
 	dst[i++] = msg->user_id;
@@ -247,13 +276,14 @@ allegro_enc_create_channel(u32 *dst, struct mcu_msg_create_channel *msg)
 		i += msg->blob_size / sizeof(*dst);
 	}
 
-	if (version >= MCU_MSG_VERSION_2019_2)
-		dst[i++] = msg->ep1_addr;
+	if (devtype == MCU_MSG_DEVTYPE_ENCODER)
+		if (version >= MCU_MSG_VERSION_2019_2)
+			dst[i++] = msg->ep1_addr;
 
 	return i * sizeof(*dst);
 }
 
-ssize_t allegro_decode_config_blob(struct create_channel_param *param,
+ssize_t allegro_unpack_encoder_config_blob(struct encoder_channel_param *param,
 				   struct mcu_msg_create_channel_response *msg,
 				   u32 *src)
 {
@@ -357,6 +387,119 @@ allegro_enc_encode_frame(u32 *dst, struct mcu_msg_encode_frame *msg)
 }
 
 static ssize_t
+allegro_enc_decode_frame(u32 *dst, struct mcu_msg_decode_frame *msg)
+{
+	enum mcu_msg_version version = msg->header.version;
+	unsigned int i = 0;
+	unsigned int j;
+
+	dst[i++] = msg->channel_id;
+	dst[i++] = msg->codec;
+	dst[i++] = FIELD_PREP(GENMASK(15, 8), msg->mv_buf_id) |
+		   FIELD_PREP(GENMASK(7, 0), msg->frm_buf_id);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->log2_max_tu_size) |
+		   FIELD_PREP(GENMASK(23, 16), msg->log2_min_tu_size) |
+		   FIELD_PREP(GENMASK(15, 8), msg->max_transfo_depth_inter) |
+		   FIELD_PREP(GENMASK(7, 0), msg->max_transfo_depth_intra);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->log2_min_cu_size) |
+		   FIELD_PREP(GENMASK(23, 16), msg->log2_max_pcm_size) |
+		   FIELD_PREP(GENMASK(15, 8), msg->log2_min_pcm_size) |
+		   FIELD_PREP(GENMASK(7, 0), msg->log2_max_tu_skip_size);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->bit_depth_luma) |
+		   FIELD_PREP(GENMASK(23, 16), msg->pcm_bit_depth_c) |
+		   FIELD_PREP(GENMASK(15, 8), msg->pcm_bit_depth_y) |
+		   FIELD_PREP(GENMASK(7, 0), msg->log2_max_cu_size);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->parallel_merge) |
+		   FIELD_PREP(GENMASK(23, 16), msg->qp_off_lst_size) |
+		   FIELD_PREP(GENMASK(15, 8), msg->chroma_qp_offs_depth) |
+		   FIELD_PREP(GENMASK(7, 0), msg->bit_depth_chroma);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cb_qp_off_lst[0]) |
+		   FIELD_PREP(GENMASK(23, 16), msg->pic_cr_qp_offs) |
+		   FIELD_PREP(GENMASK(15, 8), msg->pic_cb_qp_offs) |
+		   FIELD_PREP(GENMASK(7, 0), msg->coloc_pic_id);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cb_qp_off_lst[4]) |
+		   FIELD_PREP(GENMASK(23, 16), msg->cb_qp_off_lst[3]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->cb_qp_off_lst[2]) |
+		   FIELD_PREP(GENMASK(7, 0), msg->cb_qp_off_lst[1]);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cr_qp_off_lst[2]) |
+		   FIELD_PREP(GENMASK(23, 16), msg->cr_qp_off_lst[1]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->cr_qp_off_lst[0]) |
+		   FIELD_PREP(GENMASK(7, 0), msg->cb_qp_off_lst[5]);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->delta_qp_cu_depth) |
+		   FIELD_PREP(GENMASK(23, 16), msg->cr_qp_off_lst[5]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->cr_qp_off_lst[4]) |
+		   FIELD_PREP(GENMASK(7, 0), msg->cr_qp_off_lst[3]);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->pic_height) |
+		   FIELD_PREP(GENMASK(15, 0), msg->pic_width);
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->lcu_pic_height) |
+		   FIELD_PREP(GENMASK(15, 0), msg->lcu_pic_width);
+
+	for (j = 0; j < AL_DEC_MAX_COLUMNS_TILE; j +=2)
+		dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->column_width[j+1]) |
+			   FIELD_PREP(GENMASK(15, 0), msg->column_width[j]);
+
+	for (j = 0; j < AL_DEC_MAX_ROWS_TILE; j +=2)
+		dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->row_height[j+1]) |
+			   FIELD_PREP(GENMASK(15, 0), msg->row_height[j]);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->num_tile_rows) |
+		   FIELD_PREP(GENMASK(15, 0), msg->num_tile_columns);
+	dst[i++] = msg->current_poc;
+	dst[i++] = msg->pic_struct;
+	dst[i++] = msg->option_flags;
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->ladf_qp_offs[1]) |
+		   FIELD_PREP(GENMASK(23, 16), msg->ladf_qp_offs[0]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->ladf_lowest_interval_qp_offs) |
+		   FIELD_PREP(GENMASK(7, 0), msg->num_ladf_intervals);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->ladf_delta_threshold[0]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->ladf_qp_offs[3]) |
+		   FIELD_PREP(GENMASK(7, 0), msg->ladf_qp_offs[2]);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->ladf_delta_threshold[2]) |
+		   FIELD_PREP(GENMASK(15, 0), msg->ladf_delta_threshold[1]);
+	dst[i++] = FIELD_PREP(GENMASK(23, 16), msg->qp_prime_ts_min) |
+		   FIELD_PREP(GENMASK(15, 0), msg->ladf_delta_threshold[3]);
+
+	dst[i++] = msg->entropy_mode;
+	dst[i++] = msg->frame_num;
+	dst[i++] = lower_32_bits(msg->user_param);
+	dst[i++] = upper_32_bits(msg->user_param);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->padding2) |
+		   FIELD_PREP(GENMASK(15, 8), msg->log2_sao_offs_scale_chroma) |
+		   FIELD_PREP(GENMASK(7, 0), msg->log2_sao_offs_scale_luma);
+	dst[i++] = msg->addr_comp_data;
+	dst[i++] = msg->addr_comp_map;
+	dst[i++] = msg->addr_list_ref;
+	dst[i++] = msg->addr_stream;
+	dst[i++] = msg->stream_size;
+	dst[i++] = msg->addr_rec_y;
+	dst[i++] = msg->addr_rec_c1;
+	dst[i++] = msg->addr_rec_fbc_map_y;
+	dst[i++] = msg->addr_rec_fbc_map_c1;
+	dst[i++] = msg->pitch;
+	dst[i++] = msg->addr_scl;
+	dst[i++] = msg->addr_poc;
+	dst[i++] = msg->addr_mv;
+	dst[i++] = msg->addr_wp;
+
+	dst[i++] = msg->slice_param_blob_mcu_addr;
+
+	return i * sizeof(*dst);
+}
+
+static ssize_t
 allegro_dec_init(struct mcu_msg_init_response *msg, u32 *src)
 {
 	unsigned int i = 0;
@@ -371,26 +514,32 @@ allegro_dec_create_channel(struct mcu_msg_create_channel_response *msg,
 			   u32 *src)
 {
 	enum mcu_msg_version version = msg->header.version;
+	enum mcu_msg_devtype devtype = msg->header.devtype;
 	unsigned int i = 0;
 
 	msg->channel_id = src[i++];
 	msg->user_id = src[i++];
-	/*
-	 * Version >= MCU_MSG_VERSION_2019_2 is handled in
-	 * allegro_decode_config_blob().
-	 */
-	if (version < MCU_MSG_VERSION_2019_2) {
-		msg->options = src[i++];
-		msg->num_core = src[i++];
-		msg->num_ref_idx_l0 = FIELD_GET(GENMASK(7, 4), src[i]);
-		msg->num_ref_idx_l1 = FIELD_GET(GENMASK(11, 8), src[i++]);
+
+	if (devtype == MCU_MSG_DEVTYPE_DECODER) {
+		msg->error_code = src[i++];
+	} else {
+		/*
+		 * Version >= MCU_MSG_VERSION_2019_2 is handled in
+		 * allegro_decode_config_blob().
+		 */
+		if (version < MCU_MSG_VERSION_2019_2) {
+			msg->options = src[i++];
+			msg->num_core = src[i++];
+			msg->num_ref_idx_l0 = FIELD_GET(GENMASK(7, 4), src[i]);
+			msg->num_ref_idx_l1 = FIELD_GET(GENMASK(11, 8), src[i++]);
+		}
+		msg->int_buffers_count = src[i++];
+		msg->int_buffers_size = src[i++];
+		msg->rec_buffers_count = src[i++];
+		msg->rec_buffers_size = src[i++];
+		msg->reserved = src[i++];
+		msg->error_code = src[i++];
 	}
-	msg->int_buffers_count = src[i++];
-	msg->int_buffers_size = src[i++];
-	msg->rec_buffers_count = src[i++];
-	msg->rec_buffers_size = src[i++];
-	msg->reserved = src[i++];
-	msg->error_code = src[i++];
 
 	return i * sizeof(*src);
 }
@@ -463,6 +612,26 @@ allegro_dec_encode_frame(struct mcu_msg_encode_frame_response *msg, u32 *src)
 	return i * sizeof(*src);
 }
 
+static ssize_t
+allegro_dec_decode_frame(struct mcu_msg_decode_frame_response *msg, u32 *src)
+{
+	enum mcu_msg_version version = msg->header.version;
+	unsigned int i = 0;
+
+	msg->channel_id = src[i++];
+	msg->response_type = src[i++];
+	msg->frm_buf_id = FIELD_GET(GENMASK(7, 0), src[i]);
+	msg->mv_buf_id = FIELD_GET(GENMASK(15, 8), src[i]);
+	msg->padding = FIELD_GET(GENMASK(31, 16), src[i++]);
+	msg->num_lcu = src[i++];
+	msg->num_bytes = src[i++];
+	msg->num_bins = src[i++];
+	msg->crc = src[i++];
+	msg->pic_state = FIELD_GET(GENMASK(7, 0), src[i++]);
+
+	return i * sizeof(*src);
+}
+
 /**
  * allegro_encode_mail() - Encode allegro messages to firmware format
  * @dst: Pointer to the memory that will be filled with data
@@ -488,6 +657,9 @@ ssize_t allegro_encode_mail(u32 *dst, void *msg)
 		break;
 	case MCU_MSG_TYPE_ENCODE_FRAME:
 		size = allegro_enc_encode_frame(&dst[1], msg);
+		break;
+	case MCU_MSG_TYPE_DECODE_FRAME:
+		size = allegro_enc_decode_frame(&dst[1], msg);
 		break;
 	case MCU_MSG_TYPE_PUT_STREAM_BUFFER:
 		size = allegro_enc_put_stream_buffer(&dst[1], msg);
@@ -520,7 +692,7 @@ ssize_t allegro_encode_mail(u32 *dst, void *msg)
  * different formats into a uniform message format that can be used without
  * taking care of the firmware version.
  */
-int allegro_decode_mail(void *msg, u32 *src)
+int allegro_decode_mail(void *msg, u32 *src, enum mcu_msg_devtype devtype)
 {
 	struct mcu_msg_header *header;
 
@@ -529,8 +701,10 @@ int allegro_decode_mail(void *msg, u32 *src)
 
 	header = msg;
 	header->type = FIELD_GET(GENMASK(31, 16), src[0]);
+	header->devtype = devtype;
 
 	src++;
+
 	switch (header->type) {
 	case MCU_MSG_TYPE_INIT:
 		allegro_dec_init(msg, src);
@@ -543,6 +717,9 @@ int allegro_decode_mail(void *msg, u32 *src)
 		break;
 	case MCU_MSG_TYPE_ENCODE_FRAME:
 		allegro_dec_encode_frame(msg, src);
+		break;
+	case MCU_MSG_TYPE_DECODE_FRAME:
+		allegro_dec_decode_frame(msg, src);
 		break;
 	default:
 		return -EINVAL;
