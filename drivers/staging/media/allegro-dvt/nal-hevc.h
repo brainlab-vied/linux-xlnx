@@ -12,6 +12,17 @@
 #include <linux/types.h>
 #include <media/v4l2-ctrls.h>
 
+/*
+ * See Rec. ITU-T H.265 (02/2018) Table 7-1 - NAL unit type codes and NAL unit
+ * type classes
+ */
+enum nal_unit_type_hevc {
+    AL_NUT_HEVC_VPS = 32,
+    AL_NUT_HEVC_SPS = 33,
+    AL_NUT_HEVC_PPS = 34,
+    AL_NUT_HEVC_FD = 38,
+};
+
 struct nal_hevc_profile_tier_level {
 	unsigned int general_profile_space;
 	unsigned int general_tier_flag;

@@ -16,6 +16,7 @@ enum mcu_msg_type {
 	MCU_MSG_TYPE_DESTROY_CHANNEL = 0x0006,
 	MCU_MSG_TYPE_ENCODE_FRAME = 0x0007,
 	MCU_MSG_TYPE_DECODE_FRAME = 0x0008,
+	MCU_MSG_TYPE_SEARCH_START_CODE = 0x0009,
 	MCU_MSG_TYPE_PUT_STREAM_BUFFER = 0x0012,
 	MCU_MSG_TYPE_PUSH_BUFFER_INTERMEDIATE = 0x000e,
 	MCU_MSG_TYPE_PUSH_BUFFER_REFERENCE = 0x000f,
@@ -331,6 +332,115 @@ struct mcu_msg_encode_frame_response {
 	u32 reserved6;
 };
 
+struct mcu_msg_search_sc {
+	struct mcu_msg_header header;
+
+	u32 channel_id;
+
+	u32 codec;
+	u8 stop_param;
+	u8 stop_cond;
+	u16 max_size;
+
+	u32 addr_stream;
+	u32 stream_size;
+	u32 offset;
+	u32 avail_size;
+	u32 addr_output;
+};
+
+struct mcu_msg_search_sc_response {
+	struct mcu_msg_header header;
+	u32 channel_id;
+	u16 num_sc;
+	u16 reserved;
+	u32 num_bytes;
+};
+
+struct decode_slice_param {
+	u8 max_merged_cand;
+	u8 cabac_init_idc;
+	u8 coloc_from_l0;
+	u8 mvd_l1_zero_flag;
+
+	u16 slice_id;
+	u8 num_ref_idx_l1_minus1;
+	u8 num_ref_idx_l0_minus1;
+
+	u8 weigthed_pred;
+	u8 weigthed_bi_pred;
+
+	bool valid_conceal;
+
+	u8 slice_hdrlen;
+	u8 tile_ngb_a;
+	u8 tile_ngb_b;
+	u8 tile_ngb_c;
+
+	u8 tile_ngb_d;
+	u8 tile_ngb_e;
+	u16 num_entry_point;
+
+	u8 pic_id_l0[16];
+
+	u8 pic_id_l1[16];
+
+	u8 coloc_pic_id;
+	u8 conceal_pic_id;
+	u8 cb_qp_offs;
+	u8 cr_qp_offs;
+
+	u8 slice_qp;
+	u8 tc_offs_div2;
+	u8 beta_offs_div2;
+
+	u16 tile_width;
+	u16 tile_height;
+
+	u16 first_tile_lcu;
+	u16 first_lcu_tile_id;
+
+	u16 lcu_tile_width;
+	u16 lcu_tile_height;
+
+	u32 first_lcu;
+	u32 num_lcu;
+	u32 next_slice_segment;
+	u32 first_lcu_slice_segment;
+	u32 first_lcu_slice;
+
+	union {
+		bool direct_spatial;
+		bool temporal_mvp;
+	};
+
+	bool last_slice;
+	bool dependent_slice;
+	bool sao_filter_chroma;
+	bool sao_filter_luma;
+	bool disable_loop_filter;
+	bool x_slice_loop_filter;
+	bool cu_chroma_qp_offs;
+	bool next_is_dependent;
+	bool tile;
+
+	u32 slice_type;
+#define AL_DEC_SLICE_SI      4  /*!< AVC SI Slice */
+#define AL_DEC_SLICE_SP      3  /*!< AVC SP Slice */
+#define AL_DEC_SLICE_GOLDEN  3  /*!< Golden Slice */
+#define AL_DEC_SLICE_I       2  /*!< I Slice (can contain I blocks) */
+#define AL_DEC_SLICE_P       1  /*!< P Slice (can contain I and P blocks) */
+#define AL_DEC_SLICE_B       0  /*!< B Slice (can contain I, P and B blocks) */
+#define AL_DEC_SLICE_CONCEAL 6  /*!< Conceal Slice (slice was concealed) */
+#define AL_DEC_SLICE_SKIP    7  /*!< Skip Slice */
+
+	u32 str_avail_size;
+	u32 comp_offs;
+	u32 str_offs;
+	u32 entry_point_offs[529];
+	u32 parsing_id;
+};
+
 struct mcu_msg_decode_frame {
 	struct mcu_msg_header header;
 	u32 channel_id;
@@ -339,46 +449,47 @@ struct mcu_msg_decode_frame {
 
 	u8 frm_buf_id;
 	u8 mv_buf_id;
-	u16 padding1;
-
 	u8 max_transfo_depth_intra;
 	u8 max_transfo_depth_inter;
+
 	u8 log2_min_tu_size;
 	u8 log2_max_tu_size;
-
 	u8 log2_max_tu_skip_size;
 	s8 log2_min_pcm_size;
+
 	s8 log2_max_pcm_size;
 	s8 log2_min_cu_size;
-
 	u8 log2_max_cu_size;
 	u8 pcm_bit_depth_y;
+
 	u8 pcm_bit_depth_c;
 	u8 bit_depth_luma;
-
 	u8 bit_depth_chroma;
 	u8 chroma_qp_offs_depth;
+
 	u8 qp_off_lst_size;
 	u8 parallel_merge;
-
 	u8 coloc_pic_id;
 	s8 pic_cb_qp_offs;
+
 	s8 pic_cr_qp_offs;
 	s8 cb_qp_off_lst[6];
 	s8 cr_qp_off_lst[6];
 	s8 delta_qp_cu_depth;
-
 	u16 pic_width;
+
 	u16 pic_height;
 	u16 lcu_pic_width;
-	u16 lcu_pic_height;
 
+	u16 lcu_pic_height;
 #define AL_DEC_MAX_COLUMNS_TILE				20
 #define AL_DEC_MAX_ROWS_TILE				22
 	u16 column_width[AL_DEC_MAX_COLUMNS_TILE];
-	u16 row_height[AL_DEC_MAX_COLUMNS_TILE];
+	u16 row_height[AL_DEC_MAX_ROWS_TILE];
 	u16 num_tile_columns;
+
 	u16 num_tile_rows;
+	u16 padding1;
 
 	s32 current_poc;
 
@@ -409,10 +520,13 @@ struct mcu_msg_decode_frame {
 
 	u8 num_ladf_intervals;
 	s8 ladf_lowest_interval_qp_offs;
+
 	s8 ladf_qp_offs[4];
+
 	u16 ladf_delta_threshold[4];
 
 	u8 qp_prime_ts_min;
+	u8 padding2;
 
 	s32 chroma_mode;
 #define AL_DEC_CHROMA_MONO 					0
@@ -426,11 +540,14 @@ struct mcu_msg_decode_frame {
 #define AL_DEC_MODE_CABAC					1
 
 	s32 frame_num;
-	u64 user_param __attribute__((aligned(8)));
+	//u64 user_param __attribute__((aligned(8)));
+	u32 user_param[2];
 
 	u8 log2_sao_offs_scale_luma;
 	u8 log2_sao_offs_scale_chroma;
-	u16 padding2;
+	u16 padding3;
+
+	u32 padding4;
 
 	/* compressed MVDs + header + residuals pool buffer */
 	u32 addr_comp_data;
@@ -451,29 +568,42 @@ struct mcu_msg_decode_frame {
 	/* Weighted Pred Tables pool buffer */
 	u32 addr_wp;
 
-	u32 *slice_param_blob;
-	size_t slice_param_blob_size;
-	u32 slice_param_blob_mcu_addr;
+	/* slice param blob */
+	u32 blob_mcu_addr;
+	u32 *blob;
+	size_t blob_size;
 };
 
 struct mcu_msg_decode_frame_response {
 	struct mcu_msg_header header;
 	u32 channel_id;
+
 	u32 response_type;
 #define AL_DEC_RESPONSE_END_PARSING		1
 #define AL_DEC_RESPONSE_END_DECODING	2
-	u8 frm_buf_id;
-	u8 mv_buf_id;
-	u16 padding;
-	u32 num_lcu;
-	u32 num_bytes;
-	u32 num_bins;
-	u32 crc;
-	u8 pic_state;
+
+	union {
+		struct {
+			u32 frame_id;
+			u32 parsing_id;
+		} p;
+
+		struct {
+			u8 frm_buf_id;
+			u8 mv_buf_id;
+			u16 padding;
+			u32 num_lcu;
+			u32 num_bytes;
+			u32 num_bins;
+			u32 crc;
+
+			u8 pic_state;
 #define AL_DEC_PIC_STATE_CONCEAL		BIT(0)
 #define AL_DEC_PIC_STATE_HANGED			BIT(1)
 #define AL_DEC_PIC_STATE_NOT_FINISHED	BIT(2)
 #define AL_DEC_PIC_STATE_CMD_INVALID	BIT(3)
+		} d;
+	};
 };
 
 union mcu_msg_response {
@@ -483,6 +613,7 @@ union mcu_msg_response {
 	struct mcu_msg_destroy_channel_response destroy_channel;
 	struct mcu_msg_encode_frame_response encode_frame;
 	struct mcu_msg_decode_frame_response decode_frame;
+	struct mcu_msg_search_sc_response search_sc;
 };
 
 ssize_t allegro_pack_encoder_config_blob(u32 *dst,

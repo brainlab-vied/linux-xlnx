@@ -390,71 +390,82 @@ static ssize_t
 allegro_enc_decode_frame(u32 *dst, struct mcu_msg_decode_frame *msg)
 {
 	enum mcu_msg_version version = msg->header.version;
+	u32 codec = settings_get_mcu_codec(version, msg->codec);
 	unsigned int i = 0;
 	unsigned int j;
 
 	dst[i++] = msg->channel_id;
-	dst[i++] = msg->codec;
-	dst[i++] = FIELD_PREP(GENMASK(15, 8), msg->mv_buf_id) |
+	dst[i++] = codec;
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->max_transfo_depth_inter) |
+		   FIELD_PREP(GENMASK(23, 16), msg->max_transfo_depth_intra) |
+		   FIELD_PREP(GENMASK(15, 8), msg->mv_buf_id) |
 		   FIELD_PREP(GENMASK(7, 0), msg->frm_buf_id);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->log2_max_tu_size) |
-		   FIELD_PREP(GENMASK(23, 16), msg->log2_min_tu_size) |
-		   FIELD_PREP(GENMASK(15, 8), msg->max_transfo_depth_inter) |
-		   FIELD_PREP(GENMASK(7, 0), msg->max_transfo_depth_intra);
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->log2_min_pcm_size) |
+		   FIELD_PREP(GENMASK(23, 16), msg->log2_max_tu_skip_size) |
+		   FIELD_PREP(GENMASK(15, 8), msg->log2_max_tu_size) |
+		   FIELD_PREP(GENMASK(7, 0), msg->log2_min_tu_size);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->log2_min_cu_size) |
-		   FIELD_PREP(GENMASK(23, 16), msg->log2_max_pcm_size) |
-		   FIELD_PREP(GENMASK(15, 8), msg->log2_min_pcm_size) |
-		   FIELD_PREP(GENMASK(7, 0), msg->log2_max_tu_skip_size);
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->pcm_bit_depth_y) |
+		   FIELD_PREP(GENMASK(23, 16), msg->log2_max_cu_size) |
+		   FIELD_PREP(GENMASK(15, 8), msg->log2_min_cu_size) |
+		   FIELD_PREP(GENMASK(7, 0), msg->log2_max_pcm_size);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->bit_depth_luma) |
-		   FIELD_PREP(GENMASK(23, 16), msg->pcm_bit_depth_c) |
-		   FIELD_PREP(GENMASK(15, 8), msg->pcm_bit_depth_y) |
-		   FIELD_PREP(GENMASK(7, 0), msg->log2_max_cu_size);
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->chroma_qp_offs_depth) |
+		   FIELD_PREP(GENMASK(23, 16), msg->bit_depth_chroma) |
+		   FIELD_PREP(GENMASK(15, 8), msg->bit_depth_luma) |
+		   FIELD_PREP(GENMASK(7, 0), msg->pcm_bit_depth_c);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->parallel_merge) |
-		   FIELD_PREP(GENMASK(23, 16), msg->qp_off_lst_size) |
-		   FIELD_PREP(GENMASK(15, 8), msg->chroma_qp_offs_depth) |
-		   FIELD_PREP(GENMASK(7, 0), msg->bit_depth_chroma);
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->pic_cb_qp_offs) |
+		   FIELD_PREP(GENMASK(23, 16), msg->coloc_pic_id) |
+		   FIELD_PREP(GENMASK(15, 8), msg->parallel_merge) |
+		   FIELD_PREP(GENMASK(7, 0), msg->qp_off_lst_size);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cb_qp_off_lst[0]) |
-		   FIELD_PREP(GENMASK(23, 16), msg->pic_cr_qp_offs) |
-		   FIELD_PREP(GENMASK(15, 8), msg->pic_cb_qp_offs) |
-		   FIELD_PREP(GENMASK(7, 0), msg->coloc_pic_id);
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cb_qp_off_lst[2]) |
+		   FIELD_PREP(GENMASK(23, 16), msg->cb_qp_off_lst[1]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->cb_qp_off_lst[0]) |
+		   FIELD_PREP(GENMASK(7, 0), msg->pic_cr_qp_offs);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cb_qp_off_lst[4]) |
-		   FIELD_PREP(GENMASK(23, 16), msg->cb_qp_off_lst[3]) |
-		   FIELD_PREP(GENMASK(15, 8), msg->cb_qp_off_lst[2]) |
-		   FIELD_PREP(GENMASK(7, 0), msg->cb_qp_off_lst[1]);
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cr_qp_off_lst[0]) |
+		   FIELD_PREP(GENMASK(23, 16), msg->cb_qp_off_lst[5]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->cb_qp_off_lst[4]) |
+		   FIELD_PREP(GENMASK(7, 0), msg->cb_qp_off_lst[3]);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cr_qp_off_lst[2]) |
-		   FIELD_PREP(GENMASK(23, 16), msg->cr_qp_off_lst[1]) |
-		   FIELD_PREP(GENMASK(15, 8), msg->cr_qp_off_lst[0]) |
-		   FIELD_PREP(GENMASK(7, 0), msg->cb_qp_off_lst[5]);
+	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->cr_qp_off_lst[4]) |
+		   FIELD_PREP(GENMASK(23, 16), msg->cr_qp_off_lst[3]) |
+		   FIELD_PREP(GENMASK(15, 8), msg->cr_qp_off_lst[2]) |
+		   FIELD_PREP(GENMASK(7, 0), msg->cr_qp_off_lst[1]);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->delta_qp_cu_depth) |
-		   FIELD_PREP(GENMASK(23, 16), msg->cr_qp_off_lst[5]) |
-		   FIELD_PREP(GENMASK(15, 8), msg->cr_qp_off_lst[4]) |
-		   FIELD_PREP(GENMASK(7, 0), msg->cr_qp_off_lst[3]);
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->pic_width) |
+		   FIELD_PREP(GENMASK(15, 8), msg->delta_qp_cu_depth) |
+		   FIELD_PREP(GENMASK(7, 0), msg->cr_qp_off_lst[5]);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->pic_height) |
-		   FIELD_PREP(GENMASK(15, 0), msg->pic_width);
-	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->lcu_pic_height) |
-		   FIELD_PREP(GENMASK(15, 0), msg->lcu_pic_width);
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->lcu_pic_width) |
+		   FIELD_PREP(GENMASK(15, 0), msg->pic_height);
 
-	for (j = 0; j < AL_DEC_MAX_COLUMNS_TILE; j +=2)
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->column_width[0]) |
+		   FIELD_PREP(GENMASK(15, 0), msg->lcu_pic_height);
+
+	for (j = 1; j < AL_DEC_MAX_COLUMNS_TILE - 1; j += 2)
 		dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->column_width[j+1]) |
 			   FIELD_PREP(GENMASK(15, 0), msg->column_width[j]);
 
-	for (j = 0; j < AL_DEC_MAX_ROWS_TILE; j +=2)
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->row_height[0]) |
+		   FIELD_PREP(GENMASK(15, 0), msg->column_width[j]);
+
+	for (j = 1; j < AL_DEC_MAX_ROWS_TILE - 1; j += 2)
 		dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->row_height[j+1]) |
 			   FIELD_PREP(GENMASK(15, 0), msg->row_height[j]);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->num_tile_rows) |
-		   FIELD_PREP(GENMASK(15, 0), msg->num_tile_columns);
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->num_tile_columns) |
+		   FIELD_PREP(GENMASK(15, 0), msg->row_height[j]);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->padding1) |
+		   FIELD_PREP(GENMASK(15, 0), msg->num_tile_rows);
+
 	dst[i++] = msg->current_poc;
 	dst[i++] = msg->pic_struct;
+
 	dst[i++] = msg->option_flags;
 
 	dst[i++] = FIELD_PREP(GENMASK(31, 24), msg->ladf_qp_offs[1]) |
@@ -468,17 +479,24 @@ allegro_enc_decode_frame(u32 *dst, struct mcu_msg_decode_frame *msg)
 
 	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->ladf_delta_threshold[2]) |
 		   FIELD_PREP(GENMASK(15, 0), msg->ladf_delta_threshold[1]);
+
 	dst[i++] = FIELD_PREP(GENMASK(23, 16), msg->qp_prime_ts_min) |
 		   FIELD_PREP(GENMASK(15, 0), msg->ladf_delta_threshold[3]);
 
+	dst[i++] = msg->chroma_mode;
 	dst[i++] = msg->entropy_mode;
-	dst[i++] = msg->frame_num;
-	dst[i++] = lower_32_bits(msg->user_param);
-	dst[i++] = upper_32_bits(msg->user_param);
 
-	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->padding2) |
+	dst[i++] = msg->frame_num;
+
+	dst[i++] = msg->user_param[0];//lower_32_bits(msg->user_param);
+	dst[i++] = msg->user_param[1];//upper_32_bits(msg->user_param);
+
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->padding3) |
 		   FIELD_PREP(GENMASK(15, 8), msg->log2_sao_offs_scale_chroma) |
 		   FIELD_PREP(GENMASK(7, 0), msg->log2_sao_offs_scale_luma);
+
+	dst[i++] = 0;//msg->padding4;
+
 	dst[i++] = msg->addr_comp_data;
 	dst[i++] = msg->addr_comp_map;
 	dst[i++] = msg->addr_list_ref;
@@ -493,8 +511,30 @@ allegro_enc_decode_frame(u32 *dst, struct mcu_msg_decode_frame *msg)
 	dst[i++] = msg->addr_poc;
 	dst[i++] = msg->addr_mv;
 	dst[i++] = msg->addr_wp;
+	dst[i++] = msg->blob_mcu_addr;
 
-	dst[i++] = msg->slice_param_blob_mcu_addr;
+	return i * sizeof(*dst);
+}
+
+static ssize_t
+allegro_enc_search_sc(u32 *dst, struct mcu_msg_search_sc *msg)
+{
+	enum mcu_msg_version version = msg->header.version;
+	u32 codec = settings_get_mcu_codec(version, msg->codec);
+	unsigned int i = 0;
+
+	dst[i++] = msg->channel_id;
+
+	dst[i++] = codec;
+	dst[i++] = FIELD_PREP(GENMASK(31, 16), msg->max_size) |
+		   FIELD_PREP(GENMASK(15, 8), msg->stop_cond) |
+		   FIELD_PREP(GENMASK(7, 0), msg->stop_param);
+
+	dst[i++] = msg->addr_stream;
+	dst[i++] = msg->stream_size;
+	dst[i++] = msg->offset;
+	dst[i++] = msg->avail_size;
+	dst[i++] = msg->addr_output;
 
 	return i * sizeof(*dst);
 }
@@ -620,14 +660,34 @@ allegro_dec_decode_frame(struct mcu_msg_decode_frame_response *msg, u32 *src)
 
 	msg->channel_id = src[i++];
 	msg->response_type = src[i++];
-	msg->frm_buf_id = FIELD_GET(GENMASK(7, 0), src[i]);
-	msg->mv_buf_id = FIELD_GET(GENMASK(15, 8), src[i]);
-	msg->padding = FIELD_GET(GENMASK(31, 16), src[i++]);
-	msg->num_lcu = src[i++];
+
+	if (msg->response_type == AL_DEC_RESPONSE_END_PARSING) {
+		msg->p.frame_id = src[i++];
+		msg->p.parsing_id = src[i++];
+	} else if (msg->response_type == AL_DEC_RESPONSE_END_DECODING) {
+		msg->d.frm_buf_id = FIELD_GET(GENMASK(7, 0), src[i]);
+		msg->d.mv_buf_id = FIELD_GET(GENMASK(15, 8), src[i]);
+		msg->d.padding = FIELD_GET(GENMASK(31, 16), src[i++]);
+		msg->d.num_lcu = src[i++];
+		msg->d.num_bytes = src[i++];
+		msg->d.num_bins = src[i++];
+		msg->d.crc = src[i++];
+		msg->d.pic_state = FIELD_GET(GENMASK(7, 0), src[i++]);
+	}
+
+	return i * sizeof(*src);
+}
+
+static ssize_t
+allegro_dec_search_sc(struct mcu_msg_search_sc_response *msg, u32 *src)
+{
+	enum mcu_msg_version version = msg->header.version;
+	unsigned int i = 0;
+
+	msg->channel_id = src[i++];
+	msg->num_sc = FIELD_GET(GENMASK(15, 0), src[i]);
+	msg->reserved = FIELD_GET(GENMASK(31, 16), src[i++]);
 	msg->num_bytes = src[i++];
-	msg->num_bins = src[i++];
-	msg->crc = src[i++];
-	msg->pic_state = FIELD_GET(GENMASK(7, 0), src[i++]);
 
 	return i * sizeof(*src);
 }
@@ -660,6 +720,9 @@ ssize_t allegro_encode_mail(u32 *dst, void *msg)
 		break;
 	case MCU_MSG_TYPE_DECODE_FRAME:
 		size = allegro_enc_decode_frame(&dst[1], msg);
+		break;
+	case MCU_MSG_TYPE_SEARCH_START_CODE:
+		size = allegro_enc_search_sc(&dst[1], msg);
 		break;
 	case MCU_MSG_TYPE_PUT_STREAM_BUFFER:
 		size = allegro_enc_put_stream_buffer(&dst[1], msg);
@@ -720,6 +783,9 @@ int allegro_decode_mail(void *msg, u32 *src, enum mcu_msg_devtype devtype)
 		break;
 	case MCU_MSG_TYPE_DECODE_FRAME:
 		allegro_dec_decode_frame(msg, src);
+		break;
+	case MCU_MSG_TYPE_SEARCH_START_CODE:
+		allegro_dec_search_sc(msg, src);
 		break;
 	default:
 		return -EINVAL;

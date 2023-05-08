@@ -24,16 +24,6 @@
 #include "nal-hevc.h"
 #include "nal-rbsp.h"
 
-/*
- * See Rec. ITU-T H.265 (02/2018) Table 7-1 - NAL unit type codes and NAL unit
- * type classes
- */
-enum nal_unit_type {
-	VPS_NUT = 32,
-	SPS_NUT = 33,
-	PPS_NUT = 34,
-	FD_NUT = 38,
-};
 
 int nal_hevc_profile_from_v4l2(enum v4l2_mpeg_video_hevc_profile profile)
 {
@@ -461,7 +451,7 @@ ssize_t nal_hevc_write_vps(const struct device *dev,
 {
 	struct rbsp rbsp;
 	unsigned int forbidden_zero_bit = 0;
-	unsigned int nal_unit_type = VPS_NUT;
+	unsigned int nal_unit_type = AL_NUT_HEVC_VPS;
 	unsigned int nuh_layer_id = 0;
 	unsigned int nuh_temporal_id_plus1 = 1;
 
@@ -523,7 +513,7 @@ ssize_t nal_hevc_read_vps(const struct device *dev,
 
 	if (rbsp.error ||
 	    forbidden_zero_bit != 0 ||
-	    nal_unit_type != VPS_NUT)
+	    nal_unit_type != AL_NUT_HEVC_VPS)
 		return -EINVAL;
 
 	nal_hevc_rbsp_vps(&rbsp, vps);
@@ -556,7 +546,7 @@ ssize_t nal_hevc_write_sps(const struct device *dev,
 {
 	struct rbsp rbsp;
 	unsigned int forbidden_zero_bit = 0;
-	unsigned int nal_unit_type = SPS_NUT;
+	unsigned int nal_unit_type = AL_NUT_HEVC_SPS;
 	unsigned int nuh_layer_id = 0;
 	unsigned int nuh_temporal_id_plus1 = 1;
 
@@ -618,7 +608,7 @@ ssize_t nal_hevc_read_sps(const struct device *dev,
 
 	if (rbsp.error ||
 	    forbidden_zero_bit != 0 ||
-	    nal_unit_type != SPS_NUT)
+	    nal_unit_type != AL_NUT_HEVC_SPS)
 		return -EINVAL;
 
 	nal_hevc_rbsp_sps(&rbsp, sps);
@@ -651,7 +641,7 @@ ssize_t nal_hevc_write_pps(const struct device *dev,
 {
 	struct rbsp rbsp;
 	unsigned int forbidden_zero_bit = 0;
-	unsigned int nal_unit_type = PPS_NUT;
+	unsigned int nal_unit_type = AL_NUT_HEVC_PPS;
 	unsigned int nuh_layer_id = 0;
 	unsigned int nuh_temporal_id_plus1 = 1;
 
@@ -744,7 +734,7 @@ ssize_t nal_hevc_write_filler(const struct device *dev, void *dest, size_t n)
 {
 	struct rbsp rbsp;
 	unsigned int forbidden_zero_bit = 0;
-	unsigned int nal_unit_type = FD_NUT;
+	unsigned int nal_unit_type = AL_NUT_HEVC_FD;
 	unsigned int nuh_layer_id = 0;
 	unsigned int nuh_temporal_id_plus1 = 1;
 
@@ -810,7 +800,7 @@ ssize_t nal_hevc_read_filler(const struct device *dev, void *src, size_t n)
 	if (rbsp.error)
 		return rbsp.error;
 	if (forbidden_zero_bit != 0 ||
-	    nal_unit_type != FD_NUT)
+	    nal_unit_type != AL_NUT_HEVC_FD)
 		return -EINVAL;
 
 	nal_hevc_read_filler_data(&rbsp);
