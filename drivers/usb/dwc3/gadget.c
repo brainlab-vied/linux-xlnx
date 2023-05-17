@@ -3789,21 +3789,6 @@ void dwc3_stop_active_transfer(struct dwc3_ep *dep, bool force, bool interrupt)
 	 * This mode is NOT available on the DWC_usb31 IP.
 	 */
 
-	cmd = DWC3_DEPCMD_ENDTRANSFER;
-	cmd |= force ? DWC3_DEPCMD_HIPRI_FORCERM : 0;
-	cmd |= interrupt ? DWC3_DEPCMD_CMDIOC : 0;
-	cmd |= DWC3_DEPCMD_PARAM(dep->resource_index);
-	memset(&params, 0, sizeof(params));
-	ret = dwc3_send_gadget_ep_cmd(dep, cmd, &params);
-	WARN_ON_ONCE(ret);
-
-	/*
-	 * when transfer is stopped with force rm bit false, it can be
-	 * restarted by passing resource_index in params; don't loose it
-	 */
-	if (force)
-		dep->resource_index = 0;
-
 	/*
 	 * The END_TRANSFER command will cause the controller to generate a
 	 * NoStream Event, and it's not due to the host DP NoStream rejection.

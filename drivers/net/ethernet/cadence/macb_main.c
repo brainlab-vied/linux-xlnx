@@ -2201,12 +2201,7 @@ static int macb_pad_and_fcs(struct sk_buff **skb, struct net_device *ndev)
 	/* Not available for GSO and fragments */
 	if (!(ndev->features & NETIF_F_HW_CSUM) ||
 	    !((*skb)->ip_summed != CHECKSUM_PARTIAL) ||
-<<<<<<< HEAD
 	    skb_shinfo(*skb)->gso_size || ptp_one_step_sync(*skb))
-=======
-	    skb_shinfo(*skb)->gso_size ||
-	    ((*skb)->data_len > 0))
->>>>>>> net: macb: Disable macb pad and fcs for fragmented packets
 		return 0;
 
 	if (padlen <= 0) {
