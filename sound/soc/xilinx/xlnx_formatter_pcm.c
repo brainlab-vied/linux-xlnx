@@ -490,7 +490,6 @@ static int xlnx_formatter_pcm_hw_params(struct snd_soc_component *component,
 		return -ENODEV;
 
 	adata = dev_get_drvdata(component->dev);
->>>>>>> ASoC: xlnx: add pcm formatter platform driver
 
 	active_ch = params_channels(params);
 	if (active_ch > stream_data->ch_limit)
