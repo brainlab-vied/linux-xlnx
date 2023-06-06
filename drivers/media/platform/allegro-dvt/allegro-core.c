@@ -15,6 +15,8 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/of_address.h>
+#include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/sizes.h>
@@ -27,10 +29,23 @@
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-dma-contig.h>
 #include <media/videobuf2-v4l2.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+#include <linux/io.h>
+#include <linux/uaccess.h>
+#include <linux/mfd/syscon/xlnx-vcu.h>
+#include <linux/regmap.h>
+#include <linux/clk.h>
+#endif
 
 #include "allegro-mail.h"
 #include "nal-h264.h"
 #include "nal-hevc.h"
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+#define HOTPLUG_ALIGN 0x40000000
+#endif
 
 /*
  * Support up to 4k video streams. The hardware actually supports higher
@@ -93,6 +108,15 @@
  */
 #define ENCODER_STREAM_OFFSET SZ_128
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+#define VCU_PLL_CLK			0x34
+#define VCU_PLL_CLK_DEC			0x64
+#define VCU_MCU_CLK			0x24
+#define VCU_CORE_CLK			0x28
+#define MHZ				1000000
+#define FRAC				100
+#endif
+
 #define SIZE_MACROBLOCK 16
 
 /* Encoding options */
@@ -154,6 +178,13 @@ struct allegro_dev {
 	 */
 	unsigned long channel_user_ids;
 	struct list_head channels;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	struct clk *pll_ref;
+	struct clk *core_clk;
+	struct clk *mcu_clk;
+	struct regmap *logicore;
+#endif
 };
 
 static struct regmap_config allegro_regmap_config = {
@@ -173,6 +204,17 @@ static struct regmap_config allegro_sram_config = {
 	.max_register = 0x7fff,
 	.cache_type = REGCACHE_NONE,
 };
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+static struct regmap_config allegro_logicore_config = {
+	.name = "logicore",
+	.reg_bits = 32,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.max_register = 0xfff,
+	.cache_type = REGCACHE_NONE,
+};
+#endif
 
 #define fh_to_channel(__fh) container_of(__fh, struct allegro_channel, fh)
 
@@ -359,6 +401,24 @@ static const struct fw_info supported_firmware[] = {
 		.mailbox_status = 0x7800,
 		.mailbox_size = 0x800 - 0x8,
 		.mailbox_version = MCU_MSG_VERSION_2019_2,
+		.suballocator_size = SZ_32M,
+	}, {
+		.id = 17256,
+		.id_codec = 138748,
+		.version = "v2021.1",
+		.mailbox_cmd = 0x7000,
+		.mailbox_status = 0x7800,
+		.mailbox_size = 0x800 - 0x8,
+		.mailbox_version = MCU_MSG_VERSION_2021_1,
+		.suballocator_size = SZ_32M,
+	}, {
+		.id = 17312,
+		.id_codec = 141684,
+		.version = "v2022.2",
+		.mailbox_cmd = 0x7000,
+		.mailbox_status = 0x7800,
+		.mailbox_size = 0x800 - 0x8,
+		.mailbox_version = MCU_MSG_VERSION_2022_2,
 		.suballocator_size = SZ_32M,
 	},
 };
@@ -3661,13 +3721,175 @@ static int allegro_firmware_request_nowait(struct allegro_dev *dev)
 				       allegro_fw_callback);
 }
 
+static void allegro_probe_mem_region(struct platform_device *pdev)
+{
+	struct device_node *mem_node;
+	struct resource mem_res;
+	unsigned long pgtable_padding;
+	int ret;
+
+	mem_node = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
+	if (!mem_node)
+		return;
+
+	ret = of_address_to_resource(mem_node, 0, &mem_res);
+	if (ret)
+		goto node_put;
+
+	ret = of_reserved_mem_device_init(&pdev->dev);
+	if (ret) {
+		dev_err(&pdev->dev,
+			"failed to get shared dma pool: %d\n", ret);
+		goto node_put;
+	}
+
+	dev_info(&pdev->dev, "using shared dma pool for allocation\n");
+
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (ret) {
+		dev_err(&pdev->dev, "dma_set_mask_and_coherent: %d\n", ret);
+		of_reserved_mem_device_release(&pdev->dev);
+		goto node_put;
+	}
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+	/* Hotplug requires 0x40000000 alignment so round to nearest multiple */
+	if (resource_size(&mem_res) % HOTPLUG_ALIGN)
+		pgtable_padding = HOTPLUG_ALIGN -
+			(resource_size(&mem_res) % HOTPLUG_ALIGN);
+	else
+		pgtable_padding = 0;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	add_memory(0, mem_res.start, resource_size(&mem_res) +
+		   pgtable_padding, MHP_NONE);
+#else
+	add_memory(0, mem_res.start, resource_size(&mem_res) +
+		   pgtable_padding);
+#endif
+#endif
+
+node_put:
+	of_node_put(mem_node);
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+
+int allegro_clk_setup(struct platform_device *pdev, struct allegro_dev *dev)
+{
+	u32 refclk, coreclk, mcuclk, inte, deci;
+	int err;
+
+	dev->pll_ref = devm_clk_get(&pdev->dev, "pll_ref");
+	if (IS_ERR(dev->pll_ref)) {
+		if (PTR_ERR(dev->pll_ref) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Could not get pll_ref clock\n");
+		return PTR_ERR(dev->pll_ref);
+	}
+
+	dev->core_clk = devm_clk_get(&pdev->dev, "core_clk");
+	if (IS_ERR(dev->core_clk)) {
+		if (PTR_ERR(dev->core_clk) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Could not get core clock\n");
+		return PTR_ERR(dev->core_clk);
+	}
+
+	dev->mcu_clk = devm_clk_get(&pdev->dev, "mcu_clk");
+	if (IS_ERR(dev->mcu_clk)) {
+		if (PTR_ERR(dev->mcu_clk) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Could not get mcu clock\n");
+		return PTR_ERR(dev->mcu_clk);
+	}
+
+	regmap_read(dev->logicore, VCU_PLL_CLK, &inte);
+	regmap_read(dev->logicore, VCU_PLL_CLK_DEC, &deci);
+	regmap_read(dev->logicore, VCU_CORE_CLK, &coreclk);
+	regmap_read(dev->logicore, VCU_MCU_CLK, &mcuclk);
+
+	if (!mcuclk || !coreclk) {
+		dev_err(&pdev->dev, "Invalid mcu and core clock data\n");
+		return -EINVAL;
+	}
+
+	refclk = (inte * MHZ) + (deci * (MHZ / FRAC));
+	coreclk *= MHZ;
+	mcuclk *= MHZ;
+	dev_dbg(&pdev->dev, "Ref clock from logicoreIP is %uHz\n", refclk);
+	dev_dbg(&pdev->dev, "Core clock from logicoreIP is %uHz\n", coreclk);
+	dev_dbg(&pdev->dev, "Mcu clock from logicoreIP is %uHz\n", mcuclk);
+
+	err = clk_set_rate(dev->pll_ref, refclk);
+	if (err)
+		dev_warn(&pdev->dev, "failed to set logicoreIP refclk rate %d\n"
+			 , err);
+
+	err = clk_prepare_enable(dev->pll_ref);
+	if (err) {
+		dev_err(&pdev->dev, "failed to enable pll_ref clk source %d\n",
+			err);
+		return err;
+	}
+
+	err = clk_set_rate(dev->mcu_clk, mcuclk);
+	if (err)
+		dev_warn(&pdev->dev, "failed to set logicoreIP mcu clk rate "
+			 "%d\n", err);
+
+	err = clk_prepare_enable(dev->mcu_clk);
+	if (err) {
+		dev_err(&pdev->dev, "failed to enable mcu %d\n", err);
+		goto error_mcu;
+	}
+
+	err = clk_set_rate(dev->core_clk, coreclk);
+	if (err)
+		dev_warn(&pdev->dev, "failed to set logicoreIP core clk rate "
+			 "%d\n", err);
+
+	err = clk_prepare_enable(dev->core_clk);
+	if (err) {
+		dev_err(&pdev->dev, "failed to enable core %d\n", err);
+		goto error_core;
+	}
+	return 0;
+
+error_core:
+	clk_disable_unprepare(dev->mcu_clk);
+error_mcu:
+	clk_disable_unprepare(dev->pll_ref);
+
+	return err;
+
+}
+
+int allegro_clk_cleanup(struct platform_device *pdev, struct allegro_dev *dev)
+{
+	clk_disable_unprepare(dev->core_clk);
+	devm_clk_put(&pdev->dev, dev->core_clk);
+
+	clk_disable_unprepare(dev->mcu_clk);
+	devm_clk_put(&pdev->dev, dev->mcu_clk);
+
+	clk_disable_unprepare(dev->pll_ref);
+	devm_clk_put(&pdev->dev, dev->pll_ref);
+
+	return 0;
+}
+
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+#define AL5E_CORE_CLK "vcu_core_enc"
+#define AL5E_MCU_CLK "vcu_mcu_enc"
+#endif
+
 static int allegro_probe(struct platform_device *pdev)
 {
 	struct allegro_dev *dev;
-	struct resource *res, *sram_res;
+	struct resource *res;
 	int ret;
 	int irq;
-	void __iomem *regs, *sram_regs;
+	void __iomem *regs;
 
 	dev = devm_kzalloc(&pdev->dev, sizeof(*dev), GFP_KERNEL);
 	if (!dev)
@@ -3696,25 +3918,51 @@ static int allegro_probe(struct platform_device *pdev)
 		return PTR_ERR(dev->regmap);
 	}
 
-	sram_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "sram");
-	if (!sram_res) {
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "sram");
+	if (!res) {
 		dev_err(&pdev->dev,
 			"sram resource missing from device tree\n");
 		return -EINVAL;
 	}
-	sram_regs = devm_ioremap(&pdev->dev,
-				 sram_res->start,
-				 resource_size(sram_res));
-	if (!sram_regs) {
+	regs = devm_ioremap(&pdev->dev, res->start, resource_size(res));
+	if (!regs) {
 		dev_err(&pdev->dev, "failed to map sram\n");
 		return -ENOMEM;
 	}
-	dev->sram = devm_regmap_init_mmio(&pdev->dev, sram_regs,
+	dev->sram = devm_regmap_init_mmio(&pdev->dev, regs,
 					  &allegro_sram_config);
 	if (IS_ERR(dev->sram)) {
 		dev_err(&pdev->dev, "failed to init sram\n");
 		return PTR_ERR(dev->sram);
 	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "logicore");
+	if (!res) {
+		dev_err(&pdev->dev,
+			"logicore resource missing from device tree\n");
+		return -EINVAL;
+	}
+	regs = devm_ioremap(&pdev->dev, res->start, resource_size(res));
+	if (!regs) {
+		dev_err(&pdev->dev, "failed to map logicore\n");
+		return -ENOMEM;
+	}
+	dev->logicore = devm_regmap_init_mmio(&pdev->dev, regs,
+					  &allegro_logicore_config);
+	if (IS_ERR(dev->sram)) {
+		dev_err(&pdev->dev, "failed to init sram\n");
+		return PTR_ERR(dev->sram);
+	}
+
+	ret = allegro_clk_setup(pdev, dev);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to setup clock");
+		return ret;
+	}
+#endif
+
+	allegro_probe_mem_region(pdev);
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
@@ -3753,6 +4001,7 @@ static int allegro_remove(struct platform_device *pdev)
 		v4l2_m2m_release(dev->m2m_dev);
 	allegro_mcu_hw_deinit(dev);
 	allegro_free_fw_codec(dev);
+	of_reserved_mem_device_release(&pdev->dev);
 
 	v4l2_device_unregister(&dev->v4l2_dev);
 
@@ -3770,7 +4019,7 @@ static struct platform_driver allegro_driver = {
 	.probe = allegro_probe,
 	.remove = allegro_remove,
 	.driver = {
-		.name = "allegro",
+		.name = "allegro-dvt",
 		.of_match_table = of_match_ptr(allegro_dt_ids),
 	},
 };
