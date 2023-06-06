@@ -23,6 +23,8 @@ enum mcu_msg_type {
 enum mcu_msg_version {
 	MCU_MSG_VERSION_2018_2,
 	MCU_MSG_VERSION_2019_2,
+	MCU_MSG_VERSION_2021_1,
+	MCU_MSG_VERSION_2022_2,
 };
 
 const char *msg_type_name(enum mcu_msg_type type);
