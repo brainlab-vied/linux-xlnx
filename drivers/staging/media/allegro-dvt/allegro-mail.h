@@ -54,7 +54,7 @@ struct mcu_msg_init_response {
 	u32 reserved0;
 };
 
-struct encoder_channel_param {
+struct create_encode_channel_param {
 	enum mcu_msg_version version;
 	u32 layer_id;
 	u16 width;
@@ -146,7 +146,7 @@ struct encoder_channel_param {
 	u32 max_num_merge_cand;
 };
 
-struct decoder_channel_param {
+struct create_decode_channel_param {
 	enum mcu_msg_version version;
 	s32 width;
 	s32 height;
@@ -617,13 +617,14 @@ union mcu_msg_response {
 };
 
 ssize_t allegro_pack_encoder_config_blob(u32 *dst,
-					struct encoder_channel_param *param);
-ssize_t allegro_unpack_encoder_config_blob(struct encoder_channel_param *param,
+					struct create_encode_channel_param *param);
+ssize_t allegro_unpack_encoder_config_blob(
+				   struct create_encode_channel_param *param,
 				   struct mcu_msg_create_channel_response *msg,
 				   u32 *src);
 
 ssize_t allegro_pack_decoder_config_blob(u32 *dst,
-					struct decoder_channel_param *param);
+					struct create_decode_channel_param *param);
 
 int allegro_decode_mail(void *msg, u32 *src, enum mcu_msg_devtype devtype);
 ssize_t allegro_encode_mail(u32 *dst, void *msg);

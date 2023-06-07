@@ -82,8 +82,8 @@ static inline u32 settings_get_mcu_codec(
 	}
 }
 
-ssize_t
-allegro_pack_encoder_config_blob(u32 *dst, struct encoder_channel_param *param)
+ssize_t allegro_pack_encoder_config_blob(
+			u32 *dst, struct create_encode_channel_param *param)
 {
 	enum mcu_msg_version version = param->version;
 	unsigned int i = 0;
@@ -230,8 +230,8 @@ allegro_pack_encoder_config_blob(u32 *dst, struct encoder_channel_param *param)
 	return i * sizeof(*dst);
 }
 
-ssize_t
-allegro_pack_decoder_config_blob(u32 *dst, struct decoder_channel_param *param)
+ssize_t allegro_pack_decoder_config_blob(
+	u32 *dst, struct create_decode_channel_param *param)
 {
 	enum mcu_msg_version version = param->version;
 	unsigned int codec = settings_get_mcu_codec(version, param->codec);
@@ -283,7 +283,8 @@ allegro_enc_create_channel(u32 *dst, struct mcu_msg_create_channel *msg)
 	return i * sizeof(*dst);
 }
 
-ssize_t allegro_unpack_encoder_config_blob(struct encoder_channel_param *param,
+ssize_t allegro_unpack_encoder_config_blob(
+				   struct create_encode_channel_param *param,
 				   struct mcu_msg_create_channel_response *msg,
 				   u32 *src)
 {
