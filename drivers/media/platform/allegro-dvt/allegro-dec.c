@@ -179,21 +179,132 @@ static int allegro_mcu_send_destroy_channel(struct allegro_dev *dev,
     return 0;
 }
 
+static void allegro_fill_ref_list_addrs(
+                struct allegro_channel *channel, void *lvaddr)
+{
+#define ALLEGRO_PIC_ID_POOL_SIZE 16
+    u32 *paddr_y = (u32 *) lvaddr;
+    u32 *paddr_uv = &paddr_y[ALLEGRO_PIC_ID_POOL_SIZE];
+    u32 *coloc_mv = &paddr_uv[ALLEGRO_PIC_ID_POOL_SIZE];
+    u32 *coloc_poc = &coloc_mv[ALLEGRO_PIC_ID_POOL_SIZE];
+    u32 *fbc = &coloc_poc[ALLEGRO_PIC_ID_POOL_SIZE];
+    int i;
+
+    for (i = 0; i < ALLEGRO_PIC_ID_POOL_SIZE; i++) {
+        paddr_y[i] = channel->rec_bufs[i];
+        paddr_uv[i] = channel->rec_bufs[i] /*+ (1280 * 720)*/;
+        coloc_mv[i] = channel->mv_bufs[i];
+        coloc_poc[i] = channel->poc_bufs[i];
+
+        fbc[i] = 0;
+        fbc[ALLEGRO_PIC_ID_POOL_SIZE + i] = 0;
+    }
+}
+
+static void
+_allegro_dpd_fill_poc_list(struct allegro_channel *channel,
+        const struct v4l2_h264_reference *ref_list, u8 num_ref,
+        u32 *poc_list, u32 *ltl, u32 *spl)
+{
+#define ALLEGRO_MAX_REF 16 /* max number of frame buffers */
+    unsigned int i;
+
+    for (i = 0; i < num_ref; i++) {
+        const struct v4l2_h264_dpb_entry *dpb;
+        u8 dpb_idx;
+        u8 pic_num;
+
+        dpb_idx = ref_list[i].index;
+        dpb = &channel->h264.decode_params->dpb[dpb_idx];
+
+        if (!(dpb->flags & V4L2_H264_DPB_ENTRY_FLAG_ACTIVE))
+            continue;
+
+        pic_num = dpb->pic_num;
+        poc_list[pic_num] = dpb->frame_num;
+
+        *ltl |= ((u32) 1 << (ALLEGRO_MAX_REF + pic_num)); /* available poc */
+
+        if (dpb->flags & V4L2_H264_DPB_ENTRY_FLAG_LONG_TERM)
+            *ltl |= (1 << pic_num); /* long term flag */
+
+        if (dpb->flags & V4L2_H264_DPB_ENTRY_FLAG_FIELD)
+            *spl |= (1 << pic_num);
+    }
+}
+
+static void
+allegro_dpd_fill_poc_list0(struct allegro_channel *channel,
+                u32 *poc_list, u32 *ltl, u32 *spl)
+{
+    const struct v4l2_ctrl_h264_slice_params *slice =
+                                channel->h264.slice_params;
+
+    _allegro_dpd_fill_poc_list(channel,
+                   slice->ref_pic_list0,
+                   slice->num_ref_idx_l0_active_minus1 + 1,
+                   poc_list, ltl, spl);
+}
+
+static void
+allegro_dpd_fill_poc_list1(struct allegro_channel *channel,
+                u32 *poc_list, u32 *ltl, u32 *spl)
+{
+    const struct v4l2_ctrl_h264_slice_params *slice =
+                                channel->h264.slice_params;
+
+    _allegro_dpd_fill_poc_list(channel,
+                   slice->ref_pic_list1,
+                   slice->num_ref_idx_l1_active_minus1 + 1,
+                   poc_list, ltl, spl);
+}
+
+static void
+allegro_fill_poc_and_long_term_lists(struct allegro_channel *channel,
+                const struct decode_slice_param *param, u32 *poc_vaddr)
+{
+#define ALLEGRO_POCBUF_LONG_TERM_OFFS 64
+#define ALLEGRO_POCBUF_SUBPIC_OFFS    68
+    u32 *poc_list = (u32*) poc_vaddr;
+    u32 *ltl = (u32*) poc_vaddr + ALLEGRO_POCBUF_LONG_TERM_OFFS;
+    u32 *spl = (u32*) poc_vaddr + ALLEGRO_POCBUF_SUBPIC_OFFS;
+    int i;
+
+    if (!param->first_lcu_slice_segment) {
+        *ltl = 0;
+        *spl = 0;
+
+        for (i = 0; i < ALLEGRO_MAX_REF; i++)
+            poc_list[i] = 0xffffffff;
+    }
+
+    if (param->slice_type != AL_DEC_SLICE_I)
+        allegro_dpd_fill_poc_list0(channel, poc_list, ltl, spl);
+
+    if (param->slice_type == AL_DEC_SLICE_B)
+        allegro_dpd_fill_poc_list1(channel, poc_list, ltl, spl);
+}
+
 static void _allegro_write_ref_list(struct allegro_channel *channel,
-                                const struct v4l2_h264_reference * ref_list,
-                                u8 num_ref, u8 *pic_ids)
+                        const struct v4l2_h264_reference * ref_list,
+                        u8 num_ref, u8 *pic_ids)
 {
     struct vb2_queue *cap_q;
     const struct v4l2_ctrl_h264_decode_params *decode;
+    const struct v4l2_ctrl_h264_slice_params *slice = channel->h264.slice_params;
     unsigned int i;
 
     decode = channel->h264.decode_params;
     cap_q = v4l2_m2m_get_vq(channel->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 
+    //printk("%s,%d:...num_ref=%d\n", __func__, __LINE__, num_ref);
+
     for (i = 0; i < num_ref; i++) {
         const struct v4l2_h264_dpb_entry *dpb;
         int buf_idx;
         u8 dpb_idx;
+
+        //printk("%s,%d:...\n", __func__, __LINE__);
 
         pic_ids[i] = 0;
 
@@ -203,11 +314,20 @@ static void _allegro_write_ref_list(struct allegro_channel *channel,
         if (!(dpb->flags & V4L2_H264_DPB_ENTRY_FLAG_ACTIVE))
             continue;
 
+        //printk("%s,%d:...\n", __func__, __LINE__);
+
         buf_idx = vb2_find_timestamp(cap_q, dpb->reference_ts, 0);
         if (buf_idx < 0)
             continue;
-
-        pic_ids[i] = dpb->pic_num;
+/*
+        printk("%s,%d:...%d %d %d %d %d %d %d %d %d %d %d %d %d\n", __func__, __LINE__,
+            dpb_idx, dpb->pic_num, dpb->frame_num, dpb->top_field_order_cnt,
+            dpb->bottom_field_order_cnt, dpb->reference_ts, decode->frame_num,
+            decode->idr_pic_id, decode->top_field_order_cnt,
+            decode->bottom_field_order_cnt, decode->pic_order_cnt_lsb, buf_idx,
+            slice->slice_type);
+*/
+        pic_ids[i] = dpb->pic_num; //dpb->pic_num;
     }
 }
 
@@ -217,6 +337,8 @@ static void allegro_write_ref_list0(struct allegro_channel *channel,
     const struct v4l2_ctrl_h264_slice_params *slice;
 
     slice = channel->h264.slice_params;
+
+    //printk("%s,%d: %d\n", __func__, __LINE__, slice->num_ref_idx_l0_active_minus1 + 1);
 
     _allegro_write_ref_list(channel,
                    slice->ref_pic_list0,
@@ -231,6 +353,8 @@ static void allegro_write_ref_list1(struct allegro_channel *channel,
     const struct v4l2_ctrl_h264_slice_params *slice;
 
     slice = channel->h264.slice_params;
+
+    //printk("%s,%d: %d\n", __func__, __LINE__, slice->num_ref_idx_l1_active_minus1 + 1);
 
     _allegro_write_ref_list(channel,
                    slice->ref_pic_list1,
@@ -252,21 +376,22 @@ static void allegro_write_coloc_pic_id(struct allegro_channel *channel,
     dpb_idx = slice->ref_pic_list1[0].index;
     dpb = &decode->dpb[dpb_idx];
 
-    param->coloc_pic_id = dpb->pic_num;
+    param->coloc_pic_id = dpb->frame_num;//dpb->pic_num;
 }
 
 static int
 _allegro_fill_slice_param(struct allegro_channel *channel,
-                   struct decode_slice_param *param,
-                   unsigned long size)
+                   struct decode_slice_param *param, unsigned long size,
+                   u32 *listref_vaddr, u32 *poc_vaddr)
 {
-    struct allegro_q_data *q_data =
+    struct allegro_q_data *out_q =
                 get_q_data(channel, V4L2_BUF_TYPE_VIDEO_OUTPUT);
     const struct v4l2_ctrl_h264_slice_params *slice =
                                 channel->h264.slice_params;
     const struct v4l2_ctrl_h264_pps *pps = channel->h264.pps;
-    u32 width_mbs = q_data->width / SIZE_MACROBLOCK;
-    u32 height_map = q_data->height / SIZE_MACROBLOCK;
+    u32 width_mbs = out_q->width / SIZE_MACROBLOCK;
+    u32 height_map = out_q->height / SIZE_MACROBLOCK;
+    u32 nal_size = 0;
 
     memset(param, 0, sizeof(*param));
     param->cabac_init_idc = slice->cabac_init_idc;
@@ -305,11 +430,22 @@ _allegro_fill_slice_param(struct allegro_channel *channel,
     if (slice->header_bit_size % 8)
         param->slice_hdrlen = 16 + (slice->header_bit_size % 8);
 
-    param->str_avail_size = size;
+    nal_size = DIV_ROUND_UP(slice->header_bit_size, 8) -
+                        DIV_ROUND_UP(param->slice_hdrlen, 8);
+    param->str_avail_size = size - nal_size + 1;
+    param->str_offs = nal_size;
 
-    param->next_slice_segment = (param->slice_id * 450) + 450;
+    // printk("%s,%d: nal_size=%d hdr_bit_size=%d "
+    //        "slice_hdrlen=%d avail=%d offs=%d size=%d type=%d\n",
+    //      __func__, __LINE__, nal_size, slice->header_bit_size,
+    //      param->slice_hdrlen, param->str_avail_size, param->str_offs,
+    //      size, slice->slice_type);
+
+    //param->next_slice_segment = (param->slice_id * 450) + 450;
+    param->next_slice_segment = slice->next_slice_first_mb ?
+                slice->next_slice_first_mb : param->num_lcu;
     param->parsing_id = param->slice_id;
-    param->valid_conceal = q_data->sequence ? 1 : 0;
+    param->valid_conceal = out_q->sequence ? 1 : 0;
 
     param->slice_type = h264_slice_type_to_mcu_slice_type(slice->slice_type);
     param->dependent_slice = false;
@@ -323,6 +459,9 @@ _allegro_fill_slice_param(struct allegro_channel *channel,
 
     allegro_write_coloc_pic_id(channel, param);
 
+    memset(param->pic_id_l0, 0x00, sizeof(param->pic_id_l0[0]));
+    memset(param->pic_id_l1, 0x00, sizeof(param->pic_id_l1[0]));
+
     if ((slice->slice_type == V4L2_H264_SLICE_TYPE_P) ||
         (slice->slice_type == V4L2_H264_SLICE_TYPE_SP) ||
         (slice->slice_type == V4L2_H264_SLICE_TYPE_B))
@@ -331,33 +470,44 @@ _allegro_fill_slice_param(struct allegro_channel *channel,
     if (slice->slice_type == V4L2_H264_SLICE_TYPE_B)
         allegro_write_ref_list1(channel, param);
 
+    allegro_fill_ref_list_addrs(channel, listref_vaddr);
+
+    allegro_fill_poc_and_long_term_lists(channel, param, poc_vaddr);
+/*
+    printk("%s: %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n", __func__,
+        param->pic_id_l0[0], param->pic_id_l0[1],
+        param->pic_id_l0[2], param->pic_id_l0[3],
+        param->pic_id_l0[4], param->pic_id_l0[5],
+        param->pic_id_l0[6], param->pic_id_l0[7],
+        param->pic_id_l0[8], param->pic_id_l0[9],
+        param->pic_id_l0[10], param->pic_id_l0[11],
+        param->pic_id_l0[12], param->pic_id_l0[13],
+        param->pic_id_l0[14], param->pic_id_l0[15]);
+    printk("%s: %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n", __func__,
+        param->pic_id_l1[0], param->pic_id_l1[1],
+        param->pic_id_l1[2], param->pic_id_l1[3],
+        param->pic_id_l1[4], param->pic_id_l1[5],
+        param->pic_id_l1[6], param->pic_id_l1[7],
+        param->pic_id_l1[8], param->pic_id_l1[9],
+        param->pic_id_l1[10], param->pic_id_l1[11],
+        param->pic_id_l1[12], param->pic_id_l1[13],
+        param->pic_id_l1[14], param->pic_id_l1[15]);
+    printk("%s: ......\n", __func__);
+*/
     return 0;
 }
 
 static void
 allegro_fill_slice_param(struct allegro_channel *channel,
-                        struct decode_slice_param *sp,
-                        unsigned long size)
+                        struct decode_slice_param *sp, unsigned long size,
+                        u32 *listref_vaddr, u32 *poc_vaddr)
 {
-    const struct v4l2_ctrl_h264_slice_params *slice =
-                                channel->h264.slice_params;
-    struct allegro_q_data *q_data =
-                        get_q_data(channel, V4L2_BUF_TYPE_VIDEO_OUTPUT);
-    struct decode_slice_param *param;
+    struct decode_slice_param *param = &sp[channel->slice_id];
 
-    if (channel->fh.m2m_ctx->new_frame) {
-        q_data->sequence++;
-        channel->slice_id = 0;
-    }
-    else {
-        channel->slice_id += 1;
-    }
-
-    param = &sp[channel->slice_id];
-
-    _allegro_fill_slice_param(channel, param, size);
+    _allegro_fill_slice_param(channel, param, size, listref_vaddr, poc_vaddr);
 }
 
+void allegro_print_decode_frame(struct mcu_msg_decode_frame *msg);
 
 static int allegro_mcu_send_decode_frame(struct allegro_dev *dev,
                      struct allegro_channel *channel,
@@ -369,13 +519,14 @@ static int allegro_mcu_send_decode_frame(struct allegro_dev *dev,
                      dma_addr_t slice_p)
 {
     struct allegro_q_data *q_data =
-                        get_q_data(channel, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+                get_q_data(channel, V4L2_BUF_TYPE_VIDEO_OUTPUT);
     const struct v4l2_ctrl_h264_decode_params *decode =
                                 channel->h264.decode_params;
     const struct v4l2_ctrl_h264_slice_params *slice =
                                 channel->h264.slice_params;
     const struct v4l2_ctrl_h264_pps *pps = channel->h264.pps;
     const struct v4l2_ctrl_h264_sps *sps = channel->h264.sps;
+    u32 sp_offs = channel->slice_id * sizeof(struct decode_slice_param);
     struct mcu_msg_decode_frame msg;
     u32 width_mbs, height_map;
     int codec;
@@ -397,8 +548,8 @@ static int allegro_mcu_send_decode_frame(struct allegro_dev *dev,
     msg.log2_max_cu_size = 4;
     msg.codec = codec;
 
-    msg.pic_width = sps->pic_width_in_mbs_minus1 << 1;
-    msg.pic_height = sps->pic_height_in_map_units_minus1 << 1;
+    msg.pic_width = (sps->pic_width_in_mbs_minus1 + 1) << 1;
+    msg.pic_height = (sps->pic_height_in_map_units_minus1 + 1) << 1;
 
     msg.entropy_mode = (pps->flags & V4L2_H264_PPS_FLAG_ENTROPY_CODING_MODE) ?
                     ALLEGRO_ENTROPY_MODE_CABAC : ALLEGRO_ENTROPY_MODE_CAVLC;
@@ -429,7 +580,7 @@ static int allegro_mcu_send_decode_frame(struct allegro_dev *dev,
     msg.mv_buf_id = mv_buf_id;
 
     msg.pic_struct = AL_DEC_PS_FRM;
-    msg.frame_num = q_data->sequence;
+    msg.frame_num = decode->frame_num;//q_data->sequence;
     msg.user_param[0] = 0;
     msg.user_param[1] = 0;
 
@@ -437,6 +588,9 @@ static int allegro_mcu_send_decode_frame(struct allegro_dev *dev,
     msg.num_ladf_intervals = 35;
     msg.ladf_lowest_interval_qp_offs = 69;
     msg.coloc_pic_id = 0xff;
+
+    msg.log2_sao_offs_scale_luma = 1;
+    msg.log2_sao_offs_scale_chroma = 2;
 
     msg.addr_comp_data = to_codec_addr(dev, comp_data);
     msg.addr_comp_map = to_codec_addr(dev, comp_map);
@@ -450,7 +604,9 @@ static int allegro_mcu_send_decode_frame(struct allegro_dev *dev,
     msg.addr_mv = to_codec_addr(dev, mv);
 
     msg.blob_size = sizeof(struct decode_slice_param);
-    msg.blob_mcu_addr = to_mcu_addr(dev, slice_p);
+    msg.blob_mcu_addr = to_mcu_addr(dev, slice_p) + sp_offs;
+
+    //allegro_print_decode_frame(&msg);
 
     allegro_mbox_send(dev->mbox_command, &msg);
 
@@ -734,16 +890,13 @@ static int allegro_finish_parse_frame(struct allegro_channel *channel,
 {
     struct allegro_dev *dev = channel->dev;
     enum vb2_buffer_state state = VB2_BUF_STATE_ERROR;
-    struct allegro_q_data *q_data;
     struct vb2_v4l2_buffer *src_buf;
     struct vb2_v4l2_buffer *dst_buf;
 
-    v4l2_dbg(2, debug, &dev->v4l2_dev,
-         "channel %d: decode-frame PARSING - "
-         "frame-id %d parse-id %d\n", channel->mcu_channel_id,
-         frame_id, parsing_id);
-
-    q_data = get_q_data(channel, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+    // v4l2_dbg(2, debug, &dev->v4l2_dev,
+    //      "channel %d: decode-frame PARSING - "
+    //      "frame-id %d parse-id %d\n", channel->mcu_channel_id,
+    //      frame_id, parsing_id);
 
     src_buf = v4l2_m2m_next_src_buf(channel->fh.m2m_ctx);
     dst_buf = v4l2_m2m_next_dst_buf(channel->fh.m2m_ctx);
@@ -776,11 +929,11 @@ static int allegro_finish_decode_frame(struct allegro_channel *channel,
     struct vb2_v4l2_buffer *src_buf;
     struct vb2_v4l2_buffer *dst_buf;
 
-    v4l2_dbg(2, debug, &dev->v4l2_dev,
-         "channel %d: decode-frame DECODE - "
-         "bufid %d mvid %d state 0x%x\n",
-         msg->channel_id, msg->d.frm_buf_id,
-         msg->d.mv_buf_id, msg->d.pic_state);
+    // v4l2_dbg(2, debug, &dev->v4l2_dev,
+    //      "channel %d: decode-frame DECODE - "
+    //      "bufid %d mvid %d state 0x%x\n",
+    //      msg->channel_id, msg->d.frm_buf_id,
+    //      msg->d.mv_buf_id, msg->d.pic_state);
 
     q_data = get_q_data(channel, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 
@@ -798,7 +951,7 @@ static int allegro_finish_decode_frame(struct allegro_channel *channel,
 
     dst_buf->sequence = q_data->sequence++;
 
-    vb2_set_plane_payload(&dst_buf->vb2_buf, 0, q_data->sizeimage);
+    //vb2_set_plane_payload(&dst_buf->vb2_buf, 0, 1280*720*2/*q_data->sizeimage*/);
 
     clear_bit(msg->d.frm_buf_id, &channel->decoder_picture_ids);
     clear_bit(msg->d.mv_buf_id, &channel->decoder_mv_ids);
@@ -812,7 +965,7 @@ static int allegro_finish_decode_frame(struct allegro_channel *channel,
 
     state = VB2_BUF_STATE_DONE;
 
-    v4l2_m2m_buf_copy_metadata(src_buf, dst_buf, false);
+    //v4l2_m2m_buf_copy_metadata(src_buf, dst_buf, false);
 
 err:
     v4l2_m2m_buf_done_and_job_finish(dev->m2m_dev, channel->fh.m2m_ctx,
@@ -973,12 +1126,11 @@ allegro_prepare_next_buffers(struct allegro_channel *channel,
 static void _allegro_dec_run(struct allegro_channel *channel)
 {
     struct allegro_dev *dev = channel->dev;
-    struct allegro_q_data *q_data;
+    struct allegro_q_data *cap_q;
+    struct allegro_q_data *dst_q;
     struct vb2_v4l2_buffer *src_buf;
     struct vb2_v4l2_buffer *dst_buf;
     dma_addr_t src_addr;
-    void *src_vaddr;
-    void *dst_vaddr;
     unsigned long src_size;
     unsigned long dst_size;
     dma_addr_t dst_y;
@@ -987,23 +1139,27 @@ static void _allegro_dec_run(struct allegro_channel *channel)
     struct decode_slice_param *sp;
     int ret;
 
-    q_data = get_q_data(channel, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+    dst_q = get_q_data(channel, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+
+    if (channel->fh.m2m_ctx->new_frame) {
+        dst_q->sequence++;
+        channel->slice_id = 0;
+        //printk("%s:.......\n", __func__);
+    } else {
+        channel->slice_id += 1;
+    }
 
     src_buf = v4l2_m2m_next_src_buf(channel->fh.m2m_ctx);
-    dst_buf = v4l2_m2m_next_dst_buf(channel->fh.m2m_ctx);
-
-    src_buf->sequence = q_data->sequence++;
+    src_buf->sequence = dst_q->sequence;
     src_addr = vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0);
-    // src_vaddr = vb2_plane_vaddr(&src_buf->vb2_buf, 0);
     src_size = vb2_get_plane_payload(&src_buf->vb2_buf, 0);
 
+    cap_q = get_q_data(channel, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 
+    dst_buf = v4l2_m2m_next_dst_buf(channel->fh.m2m_ctx);
     dst_y = vb2_dma_contig_plane_dma_addr(&dst_buf->vb2_buf, 0);
-    dst_uv = dst_y + (q_data->bytesperline * q_data->height);
-    dst_uv = dst_y + (1280 * 720);
-    //dst_vaddr = vb2_plane_vaddr(&dst_buf->vb2_buf, 0);
-    //dst_size = vb2_get_plane_payload(&dst_buf->vb2_buf, 0);
-    //memset(dst_vaddr, 0, dst_size);
+    dst_uv = dst_y + (cap_q->bytesperline * cap_q->height);
+    dst_size = vb2_get_plane_payload(&dst_buf->vb2_buf, 0);
 
     ret = allegro_prepare_next_buffers(channel, &bufs);
     if (ret)
@@ -1011,14 +1167,15 @@ static void _allegro_dec_run(struct allegro_channel *channel)
 
     sp = bufs.slice_p->vaddr;
 
-    allegro_fill_slice_param(channel, sp, src_size);
+    allegro_fill_slice_param(channel, sp, src_size,
+                bufs.list_ref->vaddr, bufs.poc->vaddr);
 
     allegro_mcu_send_decode_frame(dev, channel, channel->frm_buf_id,
                      channel->mv_buf_id, src_addr, src_size, dst_y,
                      dst_uv, bufs.comp_data->paddr,
                      bufs.comp_map->paddr, bufs.list_ref->paddr,
                      bufs.poc->paddr, bufs.mv->paddr,
-                     bufs.slice_p->paddr + channel->slice_id * sizeof(struct decode_slice_param));
+                     bufs.slice_p->paddr);
 }
 
 static void allegro_dec_run(struct allegro_channel *channel)

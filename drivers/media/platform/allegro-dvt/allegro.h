@@ -66,10 +66,10 @@
  * Codec Unit v1.1) Chapter 3.
  */
 #define ALLEGRO_WIDTH_MIN 128
-#define ALLEGRO_WIDTH_DEFAULT 1920
+#define ALLEGRO_WIDTH_DEFAULT 1280
 #define ALLEGRO_WIDTH_MAX 3840
 #define ALLEGRO_HEIGHT_MIN 64
-#define ALLEGRO_HEIGHT_DEFAULT 1080
+#define ALLEGRO_HEIGHT_DEFAULT 720
 #define ALLEGRO_HEIGHT_MAX 2160
 
 #define ALLEGRO_FRAMERATE_DEFAULT ((struct v4l2_fract) { 30, 1 })
@@ -387,6 +387,10 @@ struct allegro_channel {
 	unsigned int frm_buf_id;
 	unsigned int mv_buf_id;
 	unsigned int slice_id;
+
+	dma_addr_t rec_bufs[16];
+	dma_addr_t mv_bufs[16];
+	dma_addr_t poc_bufs[16];
 };
 
 /* Logging helpers */

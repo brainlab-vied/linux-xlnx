@@ -680,6 +680,9 @@ static int allegro_queue_setup(struct vb2_queue *vq,
 		 V4L2_TYPE_IS_OUTPUT(vq->type) ? "output" : "capture",
 		 *nplanes == 0 ? "REQBUFS" : "CREATE_BUFS", *nplanes, size);
 
+	if (*nbuffers < vq->min_buffers_needed)
+		*nbuffers = vq->min_buffers_needed;
+
 	if (*nplanes)
 		return sizes[0] < size ? -EINVAL : 0;
 
@@ -859,7 +862,7 @@ static int allegro_queue_init(void *priv,
 	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	src_vq->ops = &allegro_queue_ops;
 	src_vq->buf_struct_size = sizeof(struct allegro_m2m_buffer);
-	src_vq->min_buffers_needed = 1;
+	src_vq->min_buffers_needed = 2;
 	src_vq->lock = &channel->dev->lock;
 	if (channel->inst_type == ALLEGRO_INST_DECODER) {
 		src_vq->supports_requests = true;
