@@ -443,7 +443,7 @@ static inline u64 ptr_to_u64(const void *ptr)
  * Buffers that are used internally by the MCU.
  */
 
-static int allegro_alloc_buffer(struct allegro_dev *dev,
+static inline int allegro_alloc_buffer(struct allegro_dev *dev,
 				struct allegro_buffer *buffer, size_t size)
 {
 	buffer->vaddr = dma_alloc_coherent(&dev->plat_dev->dev, size,
@@ -455,7 +455,7 @@ static int allegro_alloc_buffer(struct allegro_dev *dev,
 	return 0;
 }
 
-static void allegro_free_buffer(struct allegro_dev *dev,
+static inline void allegro_free_buffer(struct allegro_dev *dev,
 				struct allegro_buffer *buffer)
 {
 	if (buffer->vaddr) {
@@ -471,11 +471,23 @@ static void allegro_free_buffer(struct allegro_dev *dev,
 struct allegro_m2m_buffer {
 	struct v4l2_m2m_buffer buf;
 	struct list_head head;
+	u32 position;
 };
 
 #define to_allegro_m2m_buffer(__buf) \
 	container_of(__buf, struct allegro_m2m_buffer, buf)
 
+static inline struct allegro_m2m_buffer *
+vb2_v4l2_to_allegro_buffer(const struct vb2_v4l2_buffer *p)
+{
+	return container_of(p, struct allegro_m2m_buffer, buf.vb);
+}
+
+static inline struct allegro_m2m_buffer *
+vb2_to_allegro_buffer(const struct vb2_buffer *p)
+{
+	return vb2_v4l2_to_allegro_buffer(to_vb2_v4l2_buffer(p));
+}
 
 static inline u64 allegro_put_buffer(struct allegro_channel *channel,
 			      struct list_head *list,

@@ -862,7 +862,7 @@ static int allegro_queue_init(void *priv,
 	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	src_vq->ops = &allegro_queue_ops;
 	src_vq->buf_struct_size = sizeof(struct allegro_m2m_buffer);
-	src_vq->min_buffers_needed = 2;
+	src_vq->min_buffers_needed = 1;
 	src_vq->lock = &channel->dev->lock;
 	if (channel->inst_type == ALLEGRO_INST_DECODER) {
 		src_vq->supports_requests = true;
@@ -1662,7 +1662,7 @@ static int allegro_register_device(struct allegro_dev *dev)
 static void allegro_device_run(void *priv)
 {
 	struct allegro_channel *channel = priv;
-	struct allegro_dev *dev = channel->dev;
+	//struct allegro_dev *dev = channel->dev;
 
 	channel->ops->run(channel);
 
