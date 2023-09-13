@@ -107,11 +107,11 @@ static int fill_create_channel_param(struct allegro_channel *channel,
 
     q_data = get_q_data(channel, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 
-    param->width = 1280;//q_data->width;
-    param->height = 720;//q_data->height;
+    param->width = q_data->width;
+    param->height = q_data->height;
     param->log2_max_cu_size = AL_DEC_AVC_LOG2_MAX_CU_SIZE;
-    param->framerate = 24000;//DIV_ROUND_UP(channel->framerate.numerator,
-                    //channel->framerate.denominator);
+    param->framerate = DIV_ROUND_UP(channel->framerate.numerator,
+                    channel->framerate.denominator);
     param->clk_ratio = channel->framerate.denominator == 1001 ? 1001 : 1000;
     param->max_latency = 5;
     param->num_core = 0;
@@ -225,6 +225,8 @@ static void allegro_fill_ref_list_addrs(
                 struct allegro_channel *channel, void *lvaddr)
 {
 #define ALLEGRO_PIC_ID_POOL_SIZE 16
+    struct allegro_q_data *out_q =
+                get_q_data(channel, V4L2_BUF_TYPE_VIDEO_OUTPUT);
     u32 *paddr_y = (u32 *) lvaddr;
     u32 *paddr_uv = &paddr_y[ALLEGRO_PIC_ID_POOL_SIZE];
     u32 *coloc_mv = &paddr_uv[ALLEGRO_PIC_ID_POOL_SIZE];
@@ -234,7 +236,7 @@ static void allegro_fill_ref_list_addrs(
 
     for (i = 0; i < ALLEGRO_PIC_ID_POOL_SIZE; i++) {
         paddr_y[i] = allgro_get_ref_buf(channel, i);
-        paddr_uv[i] = paddr_y[i] + (1280 * 720);
+        paddr_uv[i] = paddr_y[i] + (out_q->height * out_q->width);
         coloc_mv[i] = channel->mv_bufs[i];
         coloc_poc[i] = channel->poc_bufs[i];
 
