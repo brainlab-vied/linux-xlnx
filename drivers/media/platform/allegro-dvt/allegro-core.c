@@ -125,6 +125,15 @@ static const struct fw_info fw_info_enc[] = {
 		.mailbox_size = 0x800 - 0x8,
 		.mailbox_version = MCU_MSG_VERSION_2021_1,
 		.suballocator_size = SZ_32M,
+	}, {
+		.id = 17312,
+		.id_codec = 141684,
+		.version = "v2022.2",
+		.mailbox_cmd = 0x7000,
+		.mailbox_status = 0x7800,
+		.mailbox_size = 0x800 - 0x8,
+		.mailbox_version = MCU_MSG_VERSION_2022_2,
+		.suballocator_size = SZ_32M,
 	},
 };
 
@@ -155,6 +164,15 @@ static const struct fw_info fw_info_dec[] = {
         .mailbox_status = 0x7800,
         .mailbox_size = 0x800 - 0x8,
         .mailbox_version = MCU_MSG_VERSION_2021_1,
+        .suballocator_size = SZ_32M,
+    },{
+        .id = 13768,
+        .id_codec = 41452,
+        .version = "v2022.2",
+        .mailbox_cmd = 0x7000,
+        .mailbox_status = 0x7800,
+        .mailbox_size = 0x800 - 0x8,
+        .mailbox_version = MCU_MSG_VERSION_2022_2,
         .suballocator_size = SZ_32M,
     },
 };

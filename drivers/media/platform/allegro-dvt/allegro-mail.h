@@ -29,6 +29,7 @@ enum mcu_msg_version {
 	MCU_MSG_VERSION_2018_2,
 	MCU_MSG_VERSION_2019_2,
 	MCU_MSG_VERSION_2021_1,
+	MCU_MSG_VERSION_2022_2,
 };
 
 enum mcu_msg_devtype {
