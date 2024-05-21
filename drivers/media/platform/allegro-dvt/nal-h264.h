@@ -15,6 +15,18 @@
 #include <linux/videodev2.h>
 
 /*
+ * See Rec. ITU-T H.264 (04/2017) Table 7-1 - NAL unit type codes, syntax
+ * element categories, and NAL unit type classes
+ */
+enum nal_unit_type_avc {
+	AL_NUT_AVC_VCL_NON_IDR = 1,
+	AL_NUT_AVC_VCL_IDR = 5,
+	AL_NUT_AVC_SPS = 7,
+	AL_NUT_AVC_PPS = 8,
+	AL_NUT_AVC_FD = 12,
+};
+
+/*
  * struct nal_h264_hrd_parameters - HRD parameters
  *
  * C struct representation of the sequence parameter set NAL unit as defined by
@@ -386,6 +398,90 @@ static inline int nal_h264_matrix_coeffs(enum v4l2_colorspace colorspace,
 	}
 }
 
+
+
+#if 1 // DW
+// copy the special structs from 2022 dec
+
+/*
+ * struct nal_h264_sps - Sequence parameter set
+ *
+ * C struct representation of the sequence parameter set NAL unit as defined by
+ * Rec. ITU-T H.264 (04/2017) 7.3.2.1.1 Sequence parameter set data syntax.
+ */
+struct nal_h264_slice_hdr {
+	unsigned int first_mb_in_slice;
+	unsigned int slice_type;     /* 0 = P, 1 = B, 2 = I. */
+	unsigned int pic_parameter_set_id;
+	unsigned int field_pic_flag;
+	unsigned int frame_num;
+	unsigned int redundant_pic_cnt;
+	unsigned int idr_pic_id;
+	unsigned int pic_order_cnt_lsb;
+	unsigned int delta_pic_order_cnt_bottom;
+	unsigned int delta_pic_order_cnt[2];
+	unsigned int bottom_field_flag;
+	unsigned int nal_ref_idc;
+	unsigned int direct_spatial_mv_pred_flag;
+	unsigned int num_ref_idx_active_override_flag;
+	int num_ref_idx_l0_active_minus1;
+	int num_ref_idx_l1_active_minus1;
+
+#define AL_MAX_REFERENCE_PICTURE_REORDER 17
+	unsigned int reordering_of_pic_nums_idc_l0[AL_MAX_REFERENCE_PICTURE_REORDER];
+	unsigned int reordering_of_pic_nums_idc_l1[AL_MAX_REFERENCE_PICTURE_REORDER];
+	int abs_diff_pic_num_minus1_l0[AL_MAX_REFERENCE_PICTURE_REORDER];
+	int abs_diff_pic_num_minus1_l1[AL_MAX_REFERENCE_PICTURE_REORDER];
+	unsigned int long_term_pic_num_l0[AL_MAX_REFERENCE_PICTURE_REORDER];
+	unsigned int long_term_pic_num_l1[AL_MAX_REFERENCE_PICTURE_REORDER];
+	unsigned int ref_pic_list_reordering_flag_l0;
+	unsigned int ref_pic_list_reordering_flag_l1;
+
+	struct
+	{
+		unsigned int luma_log2_weight_denom;
+		unsigned int chroma_log2_weight_denom;
+		struct {
+#define AL_MAX_REFERENCE 16
+			unsigned int luma_weight_flag[AL_MAX_REFERENCE];
+			unsigned int luma_delta_weight[AL_MAX_REFERENCE];
+			unsigned int luma_offset[AL_MAX_REFERENCE];
+
+			unsigned int chroma_weight_flag[AL_MAX_REFERENCE];
+			unsigned int chroma_delta_weight[AL_MAX_REFERENCE][2];
+			unsigned int chroma_offset[AL_MAX_REFERENCE][2];
+		} wp_coeff[2];
+	} wp_table;
+
+	unsigned int memory_management_control_operation[32];
+	unsigned int difference_of_pic_nums_minus1[32];
+	unsigned int long_term_pic_num[32];
+	unsigned int long_term_frame_idx[32];
+	unsigned int max_long_term_frame_idx_plus1[32];
+
+	unsigned int no_output_of_prior_pics_flag;
+	unsigned int long_term_reference_flag;
+	unsigned int adaptive_ref_pic_marking_mode_flag;
+	unsigned int cabac_init_idc;
+	unsigned int slice_qp_delta;
+	unsigned int disable_deblocking_filter_idc;
+	unsigned int nal_unit_type;
+	unsigned int slice_alpha_c0_offset_div2;
+	unsigned int slice_beta_offset_div2;
+	unsigned int slice_header_length;
+};
+#endif // DW
+
+
+#if 1 // DW
+// these 2 functions were added from 2022 dec
+// maybe it's not needed as 6.1 has addiitonal functions compare with 5.15
+//
+// 
+int nal_h264_profile_from_v4l2(enum v4l2_mpeg_video_h264_profile profile);
+int nal_h264_level_from_v4l2(enum v4l2_mpeg_video_h264_level level);
+#endif // DW
+
 ssize_t nal_h264_write_sps(const struct device *dev,
 			   void *dest, size_t n, struct nal_h264_sps *sps);
 ssize_t nal_h264_read_sps(const struct device *dev,
@@ -397,6 +493,17 @@ ssize_t nal_h264_write_pps(const struct device *dev,
 ssize_t nal_h264_read_pps(const struct device *dev,
 			  struct nal_h264_pps *pps, void *src, size_t n);
 void nal_h264_print_pps(const struct device *dev, struct nal_h264_pps *pps);
+
+#if 1 // DW
+// these 3 functions were added from 2022 dec
+ssize_t nal_h264_write_slice_hdr(const struct device *dev,
+			   void *dest, size_t n, struct nal_h264_slice_hdr *slice_hdr);
+ssize_t nal_h264_read_slice_hdr(const struct device *dev,
+			  struct nal_h264_slice_hdr *slice_hdr, struct nal_h264_sps sps[],
+			  struct nal_h264_pps pps[], void *src, size_t n);
+void nal_h264_print_slice_hdr(const struct device *dev,
+			  struct nal_h264_slice_hdr *slice_hdr);
+#endif // DW
 
 ssize_t nal_h264_write_filler(const struct device *dev, void *dest, size_t n);
 ssize_t nal_h264_read_filler(const struct device *dev, void *src, size_t n);

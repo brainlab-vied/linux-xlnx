@@ -16,6 +16,7 @@
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/v4l2-controls.h>
+#include <media/v4l2-ctrls.h>
 
 #include <linux/device.h>
 #include <linux/export.h>
@@ -336,6 +337,229 @@ static void nal_h264_rbsp_pps(struct rbsp *rbsp, struct nal_h264_pps *pps)
 	}
 }
 
+static void nal_h264_rbsp_slice_hdr(struct rbsp *rbsp,
+			struct nal_h264_slice_hdr *s, struct nal_h264_sps spss[],
+			struct nal_h264_pps ppss[])
+{
+	int i, n, sz;
+	struct nal_h264_sps *sps;
+	struct nal_h264_pps *pps;
+
+	rbsp_bits(rbsp, 1, NULL);
+	rbsp_bits(rbsp, 2, &s->nal_ref_idc);
+	rbsp_bits(rbsp, 5, &s->nal_unit_type);
+	rbsp_uev(rbsp, &s->first_mb_in_slice);
+	rbsp_uev(rbsp, &s->slice_type);
+	rbsp_uev(rbsp, &s->pic_parameter_set_id);
+
+	s->slice_type %= 5;
+
+	if (s->pic_parameter_set_id >= 256) {
+		rbsp->error = -EINVAL;
+		return;
+	}
+
+	pps = &ppss[s->pic_parameter_set_id];
+	sps = &spss[pps->seq_parameter_set_id];
+
+	if (/* !more_rbsp_data() */ false)
+		return;
+
+	sz = sps->log2_max_frame_num_minus4 + 4;
+	rbsp_bits(rbsp, sz, &s->frame_num);
+
+	if (!sps->frame_mbs_only_flag) {
+		rbsp_bit(rbsp, &s->field_pic_flag);
+		if (s->field_pic_flag) {
+			rbsp_bit(rbsp, &s->bottom_field_flag);
+			/* interlaced mb mode not supported */
+			return;
+		}
+	}
+	if (s->nal_unit_type == AL_NUT_AVC_VCL_IDR)
+		rbsp_uev(rbsp, &s->idr_pic_id);
+	switch (sps->pic_order_cnt_type) {
+	case 0:
+		sz = sps->log2_max_pic_order_cnt_lsb_minus4 + 4;
+		rbsp_bits(rbsp, sz, &s->pic_order_cnt_lsb);
+		if (pps->bottom_field_pic_order_in_frame_present_flag &&
+			!s->field_pic_flag) {
+			rbsp_sev(rbsp, &s->delta_pic_order_cnt_bottom);
+		}
+		break;
+	case 1:
+		if (!sps->delta_pic_order_always_zero_flag) {
+			rbsp_sev(rbsp, &s->delta_pic_order_cnt[0]);
+			if (pps->bottom_field_pic_order_in_frame_present_flag &&
+				!s->field_pic_flag)
+				rbsp_sev(rbsp, &s->delta_pic_order_cnt[1]);
+		}
+		break;
+	}
+	if (pps->redundant_pic_cnt_present_flag)
+		rbsp_uev(rbsp, &s->redundant_pic_cnt);
+	if (s->slice_type == V4L2_H264_SLICE_TYPE_B)
+		rbsp_bit(rbsp, &s->direct_spatial_mv_pred_flag);
+	if (s->slice_type != V4L2_H264_SLICE_TYPE_I) {
+		rbsp_bit(rbsp, &s->num_ref_idx_active_override_flag);
+		if (s->num_ref_idx_active_override_flag) {
+			rbsp_uev(rbsp, &s->num_ref_idx_l0_active_minus1);
+			if (s->slice_type == V4L2_H264_SLICE_TYPE_B)
+				rbsp_uev(rbsp, &s->num_ref_idx_l1_active_minus1);
+		} else {
+			s->num_ref_idx_l0_active_minus1 =
+						pps->num_ref_idx_l0_default_active_minus1;
+			s->num_ref_idx_l1_active_minus1 =
+						pps->num_ref_idx_l1_default_active_minus1;
+		}
+	}
+
+	if (/* !more_rbsp_data() */ false)
+		return;
+
+	/* parse reference pic list reodering syntax */
+	if (s->slice_type != V4L2_H264_SLICE_TYPE_I) {
+		unsigned int *abs_diff_pic_num_minus1_l0 = s->abs_diff_pic_num_minus1_l0;
+		unsigned int *long_term_pic_num_l0 = s->long_term_pic_num_l0;
+
+		rbsp_bit(rbsp, &s->ref_pic_list_reordering_flag_l0);
+		if (s->ref_pic_list_reordering_flag_l0) {
+			for (i = 0; i < AL_MAX_REFERENCE_PICTURE_REORDER; i++) {
+				rbsp_uev(rbsp, &s->reordering_of_pic_nums_idc_l0[i]);
+				if (s->reordering_of_pic_nums_idc_l0[i] == 0 ||
+					s->reordering_of_pic_nums_idc_l0[i] == 1) {
+					rbsp_uev(rbsp, abs_diff_pic_num_minus1_l0);
+					abs_diff_pic_num_minus1_l0++;
+				} else if (s->reordering_of_pic_nums_idc_l0[i] == 2) {
+					rbsp_uev(rbsp, long_term_pic_num_l0);
+					long_term_pic_num_l0++;
+				}
+				if (s->reordering_of_pic_nums_idc_l0[i] != 3)
+					return;
+			}
+		}
+	}
+
+	if (s->slice_type == V4L2_H264_SLICE_TYPE_B) {
+		unsigned int *abs_diff_pic_num_minus1_l1 = s->abs_diff_pic_num_minus1_l1;
+		unsigned int *long_term_pic_num_l1 = s->long_term_pic_num_l1;
+
+		rbsp_bit(rbsp, &s->ref_pic_list_reordering_flag_l1);
+		if (s->ref_pic_list_reordering_flag_l1) {
+			for (i = 0; i < AL_MAX_REFERENCE_PICTURE_REORDER; i++) {
+				rbsp_uev(rbsp, &s->reordering_of_pic_nums_idc_l1[i]);
+				if (s->reordering_of_pic_nums_idc_l1[i] == 0 ||
+					s->reordering_of_pic_nums_idc_l1[i] == 1) {
+					rbsp_uev(rbsp, abs_diff_pic_num_minus1_l1);
+					abs_diff_pic_num_minus1_l1++;
+				} else if (s->reordering_of_pic_nums_idc_l1[i] == 2) {
+					rbsp_uev(rbsp, long_term_pic_num_l1);
+					long_term_pic_num_l1++;
+				}
+				if (s->reordering_of_pic_nums_idc_l1[i] != 3)
+					return;
+			}
+		}
+	}
+
+	if (/* !more_rbsp_data() */ false)
+		return;
+
+	if ((pps->weighted_pred_flag && s->slice_type == V4L2_H264_SLICE_TYPE_P) ||
+		(pps->weighted_bipred_idc == 1 && s->slice_type == V4L2_H264_SLICE_TYPE_B)) {
+		rbsp_uev(rbsp, &s->wp_table.luma_log2_weight_denom);
+
+		if (sps->chroma_format_idc != 0)
+			rbsp_uev(rbsp, &s->wp_table.chroma_log2_weight_denom);
+
+		sz = s->num_ref_idx_l0_active_minus1;
+		for (n = 0; n < 2; n++) {
+			for (i = 0; i <= sz; i++) {
+				rbsp_bit(rbsp, &s->wp_table.wp_coeff[n].luma_weight_flag[i]);
+				if (s->wp_table.wp_coeff[n].luma_weight_flag[i]) {
+					rbsp_sev(rbsp, &s->wp_table.wp_coeff[n].luma_delta_weight[i]);
+					rbsp_sev(rbsp, &s->wp_table.wp_coeff[n].luma_offset[i]);
+				}
+				if (sps->chroma_format_idc != 0) {
+					rbsp_bit(rbsp, &s->wp_table.wp_coeff[n].chroma_weight_flag[i]);
+					if (s->wp_table.wp_coeff[n].chroma_weight_flag[i]) {
+						rbsp_sev(rbsp,
+							&s->wp_table.wp_coeff[n].chroma_delta_weight[i][0]);
+						rbsp_sev(rbsp,
+							&s->wp_table.wp_coeff[n].chroma_offset[i][0]);
+						rbsp_sev(rbsp,
+							&s->wp_table.wp_coeff[n].chroma_delta_weight[i][1]);
+						rbsp_sev(rbsp,
+							&s->wp_table.wp_coeff[n].chroma_offset[i][1]);
+					}
+				}
+			}
+			sz = s->num_ref_idx_l1_active_minus1;
+			if (s->slice_type != V4L2_H264_SLICE_TYPE_B)
+				break;
+		}
+	}
+
+	if (/* !more_rbsp_data() */ false)
+		return;
+
+	if (s->nal_ref_idc != 0) {
+		if (s->nal_unit_type == AL_NUT_AVC_VCL_IDR) {
+			rbsp_bit(rbsp, &s->no_output_of_prior_pics_flag);
+			rbsp_bit(rbsp, &s->long_term_reference_flag);
+		} else {
+			rbsp_bit(rbsp, &s->adaptive_ref_pic_marking_mode_flag);
+			if (s->adaptive_ref_pic_marking_mode_flag) {
+				unsigned int *p0 = s->memory_management_control_operation;
+				unsigned int *p1 = s->difference_of_pic_nums_minus1;
+				unsigned int *p2 = s->long_term_pic_num;
+				unsigned int *p3 = s->long_term_frame_idx;
+				unsigned int *p4 = s->max_long_term_frame_idx_plus1;
+
+				rbsp_uev(rbsp, p0);
+				while (*p0 != 0) {
+					switch (*p0) {
+					case 1:
+						rbsp_uev(rbsp, p1);
+						p1++;
+						break;
+					case 2:
+						rbsp_uev(rbsp, p2);
+						p2++;
+						break;
+					case 3:
+						rbsp_uev(rbsp, p1);
+						rbsp_uev(rbsp, p3);
+						p1++;
+						p3++;
+						break;
+					case 4:
+						rbsp_uev(rbsp, p4);
+						p4++;
+						break;
+					case 6:
+						rbsp_uev(rbsp, p3);
+						p3++;
+						break;
+					}
+					rbsp_uev(rbsp, p0);
+				}
+			}
+		}
+	}
+
+	if (pps->entropy_coding_mode_flag && s->slice_type != V4L2_H264_SLICE_TYPE_I)
+		rbsp_uev(rbsp, &s->cabac_init_idc);
+	rbsp_sev(rbsp, &s->slice_qp_delta);
+	if (pps->deblocking_filter_control_present_flag) {
+		rbsp_uev(rbsp, &s->disable_deblocking_filter_idc);
+		if (s->disable_deblocking_filter_idc != 1) {
+			rbsp_sev(rbsp, &s->slice_alpha_c0_offset_div2);
+			rbsp_sev(rbsp, &s->slice_beta_offset_div2);
+		}
+	}
+}
+
 /**
  * nal_h264_write_sps() - Write SPS NAL unit into RBSP format
  * @dev: device pointer
@@ -356,7 +580,7 @@ ssize_t nal_h264_write_sps(const struct device *dev,
 	struct rbsp rbsp;
 	unsigned int forbidden_zero_bit = 0;
 	unsigned int nal_ref_idc = 0;
-	unsigned int nal_unit_type = SEQUENCE_PARAMETER_SET;
+	unsigned int nal_unit_type = AL_NUT_AVC_SPS;
 
 	if (!dest)
 		return -EINVAL;
@@ -413,7 +637,7 @@ ssize_t nal_h264_read_sps(const struct device *dev,
 	if (rbsp.error ||
 	    forbidden_zero_bit != 0 ||
 	    nal_ref_idc != 0 ||
-	    nal_unit_type != SEQUENCE_PARAMETER_SET)
+	    nal_unit_type != AL_NUT_AVC_SPS)
 		return -EINVAL;
 
 	nal_h264_rbsp_sps(&rbsp, sps);
@@ -447,7 +671,7 @@ ssize_t nal_h264_write_pps(const struct device *dev,
 	struct rbsp rbsp;
 	unsigned int forbidden_zero_bit = 0;
 	unsigned int nal_ref_idc = 0;
-	unsigned int nal_unit_type = PICTURE_PARAMETER_SET;
+	unsigned int nal_unit_type = AL_NUT_AVC_PPS;
 
 	if (!dest)
 		return -EINVAL;
@@ -510,6 +734,44 @@ ssize_t nal_h264_read_pps(const struct device *dev,
 EXPORT_SYMBOL_GPL(nal_h264_read_pps);
 
 /**
+ * nal_h264_read_slice_hdr() - Read slice header from RBSP format
+ * @dev: device pointer
+ * @slice_hdr: the &struct nal_h264_slice_hdr to fill from the RBSP data
+ * @src: the buffer that contains the RBSP data
+ * @n: size of @src in bytes
+ *
+ * Read RBSP data from @src and use it to fill @slice_hdr.
+ *
+ * Return: number of bytes read from @src or negative error code
+ */
+ssize_t nal_h264_read_slice_hdr(const struct device *dev,
+			  struct nal_h264_slice_hdr *slice_hdr, struct nal_h264_sps sps[],
+			  struct nal_h264_pps pps[], void *src, size_t n)
+{
+	struct rbsp rbsp;
+
+	if (!src)
+		return -EINVAL;
+
+	rbsp_init(&rbsp, src, n, &read);
+
+	nal_h264_read_start_code_prefix(&rbsp);
+
+	/* NAL unit header */
+	//rbsp.pos += 8;
+
+	nal_h264_rbsp_slice_hdr(&rbsp, slice_hdr, sps, pps);
+
+	rbsp_trailing_bits(&rbsp);
+
+	if (rbsp.error)
+		return rbsp.error;
+
+	return DIV_ROUND_UP(rbsp.pos, 8);
+}
+EXPORT_SYMBOL_GPL(nal_h264_read_slice_hdr);
+
+/**
  * nal_h264_write_filler() - Write filler data RBSP
  * @dev: device pointer
  * @dest: buffer to fill with filler data
@@ -531,7 +793,7 @@ ssize_t nal_h264_write_filler(const struct device *dev, void *dest, size_t n)
 	struct rbsp rbsp;
 	unsigned int forbidden_zero_bit = 0;
 	unsigned int nal_ref_idc = 0;
-	unsigned int nal_unit_type = FILLER_DATA;
+	unsigned int nal_unit_type = AL_NUT_AVC_FD;
 
 	if (!dest)
 		return -EINVAL;
@@ -591,7 +853,7 @@ ssize_t nal_h264_read_filler(const struct device *dev, void *src, size_t n)
 		return rbsp.error;
 	if (forbidden_zero_bit != 0 ||
 	    nal_ref_idc != 0 ||
-	    nal_unit_type != FILLER_DATA)
+	    nal_unit_type != AL_NUT_AVC_FD)
 		return -EINVAL;
 
 	nal_h264_read_filler_data(&rbsp);

@@ -1524,6 +1524,7 @@ struct v4l2_h264_reference {
 struct v4l2_ctrl_h264_slice_params {
 	__u32 header_bit_size;
 	__u32 first_mb_in_slice;
+	__u32 next_slice_first_mb;
 	__u8 slice_type;
 	__u8 colour_plane_id;
 	__u8 redundant_pic_cnt;
