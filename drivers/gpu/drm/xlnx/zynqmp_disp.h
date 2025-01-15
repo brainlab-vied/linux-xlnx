@@ -12,6 +12,9 @@
 #ifndef _ZYNQMP_DISP_H_
 #define _ZYNQMP_DISP_H_
 
+/* The DPDMA is limited to 44 bit addressing. */
+#define ZYNQMP_DISP_MAX_DMA_BIT             44
+
 struct zynqmp_disp;
 
 void zynqmp_disp_handle_vblank(struct zynqmp_disp *disp);
