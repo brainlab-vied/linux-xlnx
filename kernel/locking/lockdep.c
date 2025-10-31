@@ -218,7 +218,7 @@ unsigned long max_lock_class_idx;
 struct lock_class lock_classes[MAX_LOCKDEP_KEYS];
 DECLARE_BITMAP(lock_classes_in_use, MAX_LOCKDEP_KEYS);
 
-static inline struct lock_class *hlock_class(struct held_lock *hlock)
+inline struct lock_class *lockdep_hlock_class(struct held_lock *hlock)
 {
 	unsigned int class_idx = hlock->class_idx;
 
@@ -239,6 +239,8 @@ static inline struct lock_class *hlock_class(struct held_lock *hlock)
 	 */
 	return lock_classes + class_idx;
 }
+EXPORT_SYMBOL_GPL(lockdep_hlock_class);
+#define hlock_class(hlock) lockdep_hlock_class(hlock)
 
 #ifdef CONFIG_LOCK_STAT
 static DEFINE_PER_CPU(struct lock_class_stats[MAX_LOCKDEP_KEYS], cpu_lock_stats);
@@ -6141,6 +6143,9 @@ static void zap_class(struct pending_free *pf, struct lock_class *class)
 		hlist_del_rcu(&class->hash_entry);
 		WRITE_ONCE(class->key, NULL);
 		WRITE_ONCE(class->name, NULL);
+		/* Class allocated but not used, -1 in nr_unused_locks */
+		if (class->usage_mask == 0)
+			debug_atomic_dec(nr_unused_locks);
 		nr_lock_classes--;
 		__clear_bit(class - lock_classes, lock_classes_in_use);
 		if (class - lock_classes == max_lock_class_idx)

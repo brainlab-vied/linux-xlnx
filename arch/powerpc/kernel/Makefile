@@ -4,7 +4,9 @@
 #
 
 ifdef CONFIG_PPC64
-CFLAGS_prom_init.o	+= $(NO_MINIMAL_TOC)
+CFLAGS_prom_init.o	+= $(NO_MINIMAL_TOC) $(call cc-disable-warning, attribute-alias)
+CFLAGS_ptrace.o		+= $(call cc-disable-warning, array-bounds)
+CFLAGS_syscalls.o	+= $(call cc-disable-warning, attribute-alias)
 endif
 ifdef CONFIG_PPC32
 CFLAGS_prom_init.o      += -fPIC
@@ -165,7 +167,7 @@ endif
 
 obj64-$(CONFIG_PPC_TRANSACTIONAL_MEM)	+= tm.o
 
-ifneq ($(CONFIG_XMON)$(CONFIG_KEXEC_CORE)(CONFIG_PPC_BOOK3S),)
+ifneq ($(CONFIG_XMON)$(CONFIG_KEXEC_CORE)$(CONFIG_PPC_BOOK3S),)
 obj-y				+= ppc_save_regs.o
 endif
 

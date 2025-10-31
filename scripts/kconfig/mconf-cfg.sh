@@ -7,6 +7,14 @@ libs=$2
 PKG="ncursesw"
 PKG2="ncurses"
 
+if [ "$CROSS_CURSES_LIB" != "" ]; then
+    echo $CROSS_CURSES_LIB > ${libs}
+    if [ x"$CROSS_CURSES_INC" != x ]; then
+	echo $CROSS_CURSES_INC > ${cflags}
+    fi
+    exit 0
+fi
+
 if [ -n "$(command -v ${HOSTPKG_CONFIG})" ]; then
 	if ${HOSTPKG_CONFIG} --exists $PKG; then
 		${HOSTPKG_CONFIG} --cflags ${PKG} > ${cflags}
