@@ -16,6 +16,8 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 
+#include <linux/dma-mapping.h>
+
 #include "xlnx_drv.h"
 
 #include "zynqmp_disp.h"
