@@ -437,9 +437,9 @@ skip_sess_setup:
 		free_xid(xid);
 		ses->flags &= ~CIFS_SES_FLAGS_PENDING_QUERY_INTERFACES;
 
-		/* regardless of rc value, setup polling */
-		queue_delayed_work(cifsiod_wq, &tcon->query_interfaces,
-				   (SMB_INTERFACE_POLL_INTERVAL * HZ));
+		if (!tcon->ipc && !tcon->dummy)
+			queue_delayed_work(cifsiod_wq, &tcon->query_interfaces,
+					   (SMB_INTERFACE_POLL_INTERVAL * HZ));
 
 		mutex_unlock(&ses->session_mutex);
 
@@ -2989,7 +2989,7 @@ replay_again:
 
 	SMB2_close(xid, tcon, rsp->PersistentFileId, rsp->VolatileFileId);
 
-	/* Eventually save off posix specific response info and timestaps */
+	/* Eventually save off posix specific response info and timestamps */
 
 err_free_rsp_buf:
 	free_rsp_buf(resp_buftype, rsp_iov.iov_base);
@@ -4228,10 +4228,8 @@ void smb2_reconnect_server(struct work_struct *work)
 		}
 		goto done;
 	}
-
 	tcon->status = TID_GOOD;
-	tcon->retry = false;
-	tcon->need_reconnect = false;
+	tcon->dummy = true;
 
 	/* now reconnect sessions for necessary channels */
 	list_for_each_entry_safe(ses, ses2, &tmp_ses_list, rlist) {
@@ -4576,7 +4574,7 @@ smb2_readv_callback(struct mid_q_entry *mid)
 	}
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	/*
-	 * If this rdata has a memmory registered, the MR can be freed
+	 * If this rdata has a memory registered, the MR can be freed
 	 * MR needs to be freed as soon as I/O finishes to prevent deadlock
 	 * because they have limited number and are used for future I/Os
 	 */
