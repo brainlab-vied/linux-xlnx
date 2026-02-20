@@ -8,6 +8,7 @@
 void tso_build_hdr(const struct sk_buff *skb, char *hdr, struct tso_t *tso,
 		   int size, bool is_last)
 {
+	struct tcphdr *tcph;
 	int hdr_len = skb_transport_offset(skb) + tso->tlen;
 	int mac_hdr_len = skb_network_offset(skb);
 
@@ -23,22 +24,15 @@ void tso_build_hdr(const struct sk_buff *skb, char *hdr, struct tso_t *tso,
 
 		iph->payload_len = htons(size + tso->tlen);
 	}
-	hdr += skb_transport_offset(skb);
-	if (tso->tlen != sizeof(struct udphdr)) {
-		struct tcphdr *tcph = (struct tcphdr *)hdr;
 
-		put_unaligned_be32(tso->tcp_seq, &tcph->seq);
+	tcph = (struct tcphdr *)(hdr + skb_transport_offset(skb));
+	put_unaligned_be32(tso->tcp_seq, &tcph->seq);
 
-		if (!is_last) {
-			/* Clear all special flags for not last packet */
-			tcph->psh = 0;
-			tcph->fin = 0;
-			tcph->rst = 0;
-		}
-	} else {
-		struct udphdr *uh = (struct udphdr *)hdr;
-
-		uh->len = htons(sizeof(*uh) + size);
+	if (!is_last) {
+		/* Clear all special flags for not last packet */
+		tcph->psh = 0;
+		tcph->fin = 0;
+		tcph->rst = 0;
 	}
 }
 EXPORT_SYMBOL(tso_build_hdr);
@@ -63,12 +57,12 @@ EXPORT_SYMBOL(tso_build_data);
 
 int tso_start(struct sk_buff *skb, struct tso_t *tso)
 {
-	int tlen = skb_is_gso_tcp(skb) ? tcp_hdrlen(skb) : sizeof(struct udphdr);
+	int tlen = tcp_hdrlen(skb);
 	int hdr_len = skb_transport_offset(skb) + tlen;
 
 	tso->tlen = tlen;
 	tso->ip_id = ntohs(ip_hdr(skb)->id);
-	tso->tcp_seq = (tlen != sizeof(struct udphdr)) ? ntohl(tcp_hdr(skb)->seq) : 0;
+	tso->tcp_seq = ntohl(tcp_hdr(skb)->seq);
 	tso->next_frag_idx = 0;
 	tso->ipv6 = vlan_get_protocol(skb) == htons(ETH_P_IPV6);
 
