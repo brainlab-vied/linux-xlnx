@@ -3901,10 +3901,11 @@ static int spi_nor_init(struct spi_nor *nor)
 	u32 n_flash = 1;
 	int err, idx;
 
-	if (nor->info->id[0] == CFI_MFR_ATMEL ||
+	if (!IS_ENABLED(CONFIG_MTD_SPI_NOR_SWP_KEEP) &&
+		(nor->info->id[0] == CFI_MFR_ATMEL ||
 	    nor->info->id[0] == CFI_MFR_INTEL ||
 	    nor->info->id[0] == CFI_MFR_SST ||
-	    nor->info->id[0] & SNOR_F_HAS_LOCK) {
+	    nor->info->id[0] & SNOR_F_HAS_LOCK)) {
 		spi_nor_write_enable(nor);
 		nor->bouncebuf[0] = 0;
 		spi_nor_write_sr(nor, nor->bouncebuf, 1);
