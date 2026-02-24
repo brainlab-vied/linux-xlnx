@@ -280,6 +280,7 @@ void dwc3_ep0_out_start(struct dwc3 *dwc)
 {
 	struct dwc3_ep			*dep;
 	int				ret;
+	int				i;
 
 	complete(&dwc->ep0_in_setup);
 
