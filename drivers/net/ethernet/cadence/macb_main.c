@@ -2564,6 +2564,12 @@ static void macb_free_consistent(struct macb *bp)
 	unsigned int q;
 	int size;
 
+	if (bp->rx_ring_tieoff) {
+		dma_free_coherent(&bp->pdev->dev, macb_dma_desc_get_size(bp),
+				  bp->rx_ring_tieoff, bp->rx_ring_tieoff_dma);
+		bp->rx_ring_tieoff = NULL;
+	}
+
 	bp->macbgem_ops.mog_free_rx_buffers(bp);
 
 	if (bp->rx_ring_tieoff) {
@@ -2680,15 +2686,15 @@ out_err:
 
 static void macb_init_tieoff(struct macb *bp)
 {
-	struct macb_dma_desc *d = bp->rx_ring_tieoff;
+	struct macb_dma_desc *desc = bp->rx_ring_tieoff;
 
-	if (bp->num_queues > 1) {
-		/* Setup a wrapping descriptor with no free slots
-		 * (WRAP and USED) to tie off/disable unused RX queues.
-		 */
-		macb_set_addr(bp, d, MACB_BIT(RX_WRAP) | MACB_BIT(RX_USED));
-		d->ctrl = 0;
-	}
+	if (bp->caps & MACB_CAPS_QUEUE_DISABLE)
+		return;
+	/* Setup a wrapping descriptor with no free slots
+	 * (WRAP and USED) to tie off/disable unused RX queues.
+	 */
+	macb_set_addr(bp, desc, MACB_BIT(RX_WRAP) | MACB_BIT(RX_USED));
+	desc->ctrl = 0;
 }
 
 static void gem_init_rings(struct macb *bp)
@@ -2714,9 +2720,7 @@ static void gem_init_rings(struct macb *bp)
 		gem_rx_refill(queue);
 	}
 
-	if (!(bp->caps & MACB_CAPS_QUEUE_DISABLE))
-		macb_init_tieoff(bp);
-
+	macb_init_tieoff(bp);
 }
 
 static void macb_init_rings(struct macb *bp)
@@ -5312,7 +5316,8 @@ static int __maybe_unused macb_suspend(struct device *dev)
 	struct macb_queue *queue;
 	unsigned long flags;
 	unsigned int q;
-	u32 ctrl, arpipmask;
+	int err;
+	u32 tmp;
 
 	if (!device_may_wakeup(&bp->dev->dev))
 		phy_exit(bp->sgmii_phy);
@@ -5320,46 +5325,73 @@ static int __maybe_unused macb_suspend(struct device *dev)
 	if (!netif_running(netdev))
 		return 0;
 
-	if (device_may_wakeup(&bp->dev->dev)) {
+    if (bp->wol & MACB_WOL_ENABLED) {
 		if (!bp->dev->ip_ptr->ifa_list) {
 			netdev_err(netdev, "IP address not assigned\n");
 			return -EOPNOTSUPP;
 		}
 		spin_lock_irqsave(&bp->lock, flags);
-		ctrl = macb_readl(bp, NCR);
-		ctrl &= ~(MACB_BIT(TE) | MACB_BIT(RE));
-		macb_writel(bp, NCR, ctrl);
-		/* Tie off RX queues */
+
+		/* Disable Tx and Rx engines before  disabling the queues,
+		 * this is mandatory as per the IP spec sheet
+		 */
+		tmp = macb_readl(bp, NCR);
+		macb_writel(bp, NCR, tmp & ~(MACB_BIT(TE) | MACB_BIT(RE)));
 		for (q = 0, queue = bp->queues; q < bp->num_queues;
 		     ++q, ++queue) {
-			if (bp->caps & MACB_CAPS_QUEUE_DISABLE)
-				queue_writel(queue, RBQP, GEM_RBQP_DISABLE);
-			else
+			/* Disable RX queues */
+			if (bp->caps & MACB_CAPS_QUEUE_DISABLE) {
+				queue_writel(queue, RBQP, MACB_BIT(QUEUE_DISABLE));
+			} else {
+				/* Tie off RX queues */
 				queue_writel(queue, RBQP,
 					     lower_32_bits(bp->rx_ring_tieoff_dma));
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+				queue_writel(queue, RBQPH,
+					     upper_32_bits(bp->rx_ring_tieoff_dma));
+#endif
+			}
+			/* Disable all interrupts */
+			queue_writel(queue, IDR, -1);
+			queue_readl(queue, ISR);
+			if (bp->caps & MACB_CAPS_ISR_CLEAR_ON_WRITE)
+				queue_writel(queue, ISR, -1);
 		}
-		ctrl = macb_readl(bp, NCR);
-		ctrl |= MACB_BIT(RE);
-		macb_writel(bp, NCR, ctrl);
-		gem_writel(bp, NCFGR, gem_readl(bp, NCFGR) & ~MACB_BIT(NBC));
+		/* Enable Receive engine */
+		macb_writel(bp, NCR, tmp | MACB_BIT(RE));
+		/* Flush all status bits */
 		macb_writel(bp, TSR, -1);
 		macb_writel(bp, RSR, -1);
-		macb_readl(bp, ISR);
-		if (bp->caps & MACB_CAPS_ISR_CLEAR_ON_WRITE)
-			macb_writel(bp, ISR, -1);
 
-		/* Enable WOL (Q0 only) and disable all other interrupts */
-		macb_writel(bp, IER, MACB_BIT(WOL));
-		for (q = 1, queue = bp->queues; q < bp->num_queues;
-		     ++q, ++queue) {
-			queue_writel(queue, IDR, bp->rx_intr_mask |
-						 MACB_TX_INT_FLAGS |
-						 MACB_BIT(HRESP));
+		/* Change interrupt handler and
+		 * Enable WoL IRQ on queue 0
+		 */
+		devm_free_irq(dev, bp->queues[0].irq, bp->queues);
+		if (macb_is_gem(bp)) {
+			err = devm_request_irq(dev, bp->queues[0].irq, gem_wol_interrupt,
+					       IRQF_SHARED, netdev->name, bp->queues);
+			if (err) {
+				dev_err(dev,
+					"Unable to request IRQ %d (error %d)\n",
+					bp->queues[0].irq, err);
+				spin_unlock_irqrestore(&bp->lock, flags);
+				return err;
+			}
+			queue_writel(bp->queues, IER, GEM_BIT(WOL));
+			gem_writel(bp, WOL, MACB_BIT(MAG));
+		} else {
+			err = devm_request_irq(dev, bp->queues[0].irq, macb_wol_interrupt,
+					       IRQF_SHARED, netdev->name, bp->queues);
+			if (err) {
+				dev_err(dev,
+					"Unable to request IRQ %d (error %d)\n",
+					bp->queues[0].irq, err);
+				spin_unlock_irqrestore(&bp->lock, flags);
+				return err;
+			}
+			queue_writel(bp->queues, IER, MACB_BIT(WOL));
+			macb_writel(bp, WOL, MACB_BIT(MAG));
 		}
-
-		arpipmask = cpu_to_be32p(&bp->dev->ip_ptr->ifa_list->ifa_local)
-					 & 0xFFFF;
-		gem_writel(bp, WOL, MACB_BIT(ARP) | arpipmask);
 		spin_unlock_irqrestore(&bp->lock, flags);
 		enable_irq_wake(bp->queues[0].irq);
 	}
