@@ -624,6 +624,44 @@ static irqreturn_t xilinx_spi_irq(int irq, void *dev_id)
 
 	return status;
 }
+
+static int xilinx_spi_find_buffer_size(struct xilinx_spi *xspi)
+{
+	u8 sr;
+	int n_words = 0;
+
+	/*
+	 * Before the buffer_size detection we reset the core
+	 * to make sure we start with a clean state.
+	 */
+	xspi->write_fn(XIPIF_V123B_RESET_MASK,
+		xspi->regs + XIPIF_V123B_RESETR_OFFSET);
+
+	/* Fill the Tx FIFO with as many words as possible */
+	while (1) {
+		xspi->write_fn(0, xspi->regs + XSPI_TXD_OFFSET);
+		sr = xspi->read_fn(xspi->regs + XSPI_SR_OFFSET);
+		if (sr & XSPI_SR_TX_FULL_MASK)
+			break;
+
+		n_words++;
+	}
+
+	/* Handle the NO FIFO case separately */
+	if (!n_words)
+		return 1;
+
+	return n_words;
+}
+
+static const struct of_device_id xilinx_spi_of_match[] = {
+	{ .compatible = "xlnx,axi-quad-spi-1.00.a", },
+	{ .compatible = "xlnx,xps-spi-2.00.a", },
+	{ .compatible = "xlnx,xps-spi-2.00.b", },
+	{}
+};
+MODULE_DEVICE_TABLE(of, xilinx_spi_of_match);
+
 static int xilinx_spi_probe(struct platform_device *pdev)
 {
 	struct xilinx_spi *xspi;
@@ -661,13 +699,6 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 	if (IS_ERR(xspi->regs)) {
 		ret = PTR_ERR(xspi->regs);
 		goto put_master;
-	}
-	ret = of_property_read_u32(pdev->dev.of_node, "fifo-size",
-				   &fifo_size);
-	if (ret < 0) {
-		dev_err(&pdev->dev,
-			"Missing fifo size\n");
-		return -EINVAL;
 	}
 	if (of_property_read_u32(pdev->dev.of_node, "bits-per-word",
 				 &bits_per_word))
@@ -721,6 +752,14 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 	if (tmp != XSPI_CR_LOOP) {
 		xspi->read_fn = xspi_read32_be;
 		xspi->write_fn = xspi_write32_be;
+	}
+
+    ret = of_property_read_u32(pdev->dev.of_node, "fifo-size",
+				   &fifo_size);
+	if (ret < 0) {
+		dev_warn(&pdev->dev,
+			"Missing fifo size. Probing from hardware.");
+        fifo_size = xilinx_spi_find_buffer_size(xspi);
 	}
 
 	xspi->buffer_size = fifo_size;
@@ -830,14 +869,6 @@ static int xilinx_spi_remove(struct platform_device *pdev)
 
 /* work with hotplug and coldplug */
 MODULE_ALIAS("platform:" XILINX_SPI_NAME);
-
-static const struct of_device_id xilinx_spi_of_match[] = {
-	{ .compatible = "xlnx,axi-quad-spi-1.00.a", },
-	{ .compatible = "xlnx,xps-spi-2.00.a", },
-	{ .compatible = "xlnx,xps-spi-2.00.b", },
-	{}
-};
-MODULE_DEVICE_TABLE(of, xilinx_spi_of_match);
 
 static struct platform_driver xilinx_spi_driver = {
 	.probe = xilinx_spi_probe,
