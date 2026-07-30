@@ -1784,9 +1784,9 @@ static int __dwc3_stop_active_transfer(struct dwc3_ep *dep, bool force, bool int
 		return 0;
 	}
 
-    if (ret)
-        dev_err_ratelimited(dep->dwc->dev,
-                "end transfer failed: %d\n", ret);
+	if (ret)
+		dev_err_ratelimited(dep->dwc->dev,
+			"end transfer failed: %d\n", ret);
 
 	/*
 	 * when transfer is stopped with force rm bit false, it can be

@@ -305,8 +305,6 @@ static ssize_t spi_nor_spimem_write_data(struct spi_nor *nor, loff_t to,
 ssize_t spi_nor_write_data(struct spi_nor *nor, loff_t to, size_t len,
 			   const u8 *buf)
 {
-	int ret;
-
 	if (nor->spimem)
 		return spi_nor_spimem_write_data(nor, to, len, buf);
 

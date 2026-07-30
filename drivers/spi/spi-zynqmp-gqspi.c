@@ -883,8 +883,8 @@ static irqreturn_t zynqmp_qspi_irq(int irq, void *dev_id)
 				   dma_status);
 	}
 
-    if (!mask && !dma_status)
-        return IRQ_NONE;
+	if (!mask && !dma_status)
+		return IRQ_NONE;
 
 	if (dma_status & GQSPI_QSPIDMA_DST_I_STS_DONE_MASK)
 		zynqmp_process_dma_irq(xqspi);

@@ -15,6 +15,7 @@
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/dma-mapping.h>
 
 #include "xlnx_drv.h"
 
@@ -72,7 +73,7 @@ static int zynqmp_dpsub_probe(struct platform_device *pdev)
 	/* Sub-driver will access dpsub from drvdata */
 	platform_set_drvdata(pdev, dpsub);
 
-	ret = dma_set_mask(dpsub->dev, DMA_BIT_MASK(ZYNQMP_DISP_MAX_DMA_BIT));
+	ret = dma_set_mask(&pdev->dev, DMA_BIT_MASK(ZYNQMP_DISP_MAX_DMA_BIT));
 	if (ret)
 		return ret;
 
