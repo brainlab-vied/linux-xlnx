@@ -28,6 +28,8 @@
 #include <linux/pinctrl/machine.h>
 #include <linux/pinctrl/pinctrl.h>
 
+#include <linux/gpio/driver.h>
+
 #ifdef CONFIG_GPIOLIB
 #include "../gpio/gpiolib.h"
 #endif
